@@ -5,6 +5,8 @@ date: "`r Sys.Date()`"
 output: html_document
 ---
 
+# creating the diluted datasets
+
 ```{r}
 deas <- list( HEK=readRDS("bartel_HEK.deaList.rds"),
               Hela=readRDS("bartel_HeLa.deaList.rds") )
@@ -20,10 +22,53 @@ deas2 <- unlist(lapply(deas, FUN=function(x){
     sn <- floor(p*nrow(x))
     i <- sample(seq_len(nrow(x)), sn)
     j <- sample(seq_len(sn),seq_len(sn))
-    x[i,] <- x[i[j],]
+    row.names(x)[i] <- row.names(x)[i[j]]
     x
   })
 }), recursive=FALSE)
 saveRDS(deas2, file="dilutedDatasets.rds")
 ```
+
+
+# Benchmarking
+
+We'll take the first dea, run enrichmir, and benchmark it:
+
+```{r}
+devtools::load_all("../enrichMiR/")
+TS <- readRDS("data/TargetScan_all.rds")
+fams <- metadata(TS)$families
+
+dea <- deas[[1]]
+e <- enrichMiR(dea, TS)
+
+TP <- unique(as.character(fams[grep("miR-122$|miR-122-",names(fams))]))
+thresholds <- c(0,10^(-10:-3),0.005,0.01,0.025,0.05,0.075,0.1,0.15,0.2,0.25,0.3,0.5)
+
+dat <- dplyr::bind_rows(lapply(e@res, FUN=function(x){
+  if("family" %in% colnames(x)) row.names(x) <- x$family
+  x$truth <- row.names(x) %in% TP
+  x$FDR[is.na(x$FDR)] <- 1
+  as.data.frame(t(sapply(thresholds, FUN=function(i){
+    P <- sum(x$FDR<=i)
+    c( threshold=i,
+       P=P,
+       TP=sum(x$FDR<=i & x$truth),
+       FP=sum(x$FDR<=i & !x$truth),
+       TPR=sum(x$FDR<=i & x$truth)/sum(x$truth),
+       FPR=sum(x$FDR<=i & !x$truth)/sum(!x$truth),
+       FDR=ifelse(P>0,sum(x$FDR<=i & !x$truth)/P,0) )
+  })))
+}), .id="method")
+
+ggplot(dat, aes(FPR, TPR, colour=method)) + geom_line() + geom_point(size=3) + 
+  scale_x_log10()  + scale_colour_manual(values=cols)
+
+# AUC, approximated as the inverse of the number of positives to recover the true positives:
+auc <- sapply(split(dat,dat$method), FUN=function(x){
+    if(!any(x$TPR>=1)) return(0)
+    1/x$P[which(x$TPR>=1)[1]]
+})
+```
+
 
