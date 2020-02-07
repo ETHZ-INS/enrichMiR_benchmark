@@ -1,0 +1,29 @@
+---
+title: "Diluted benchmark datasets"
+author: "Pierre-Luc Germain"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+deas <- list( HEK=readRDS("bartel_HEK.deaList.rds"),
+              Hela=readRDS("bartel_HeLa.deaList.rds") )
+deas <- unlist(deas, recursive = FALSE)
+
+names(i) <- i <- 1:5
+props <- unlist(lapply( c("20"=0.2, "30"=0.3, "40"=0.4, "50"=0.5), 
+                        FUN=function(x) lapply(i, FUN=function(y) x)))
+set.seed(1234)
+deas2 <- unlist(lapply(deas, FUN=function(x){
+  x <- plgINS::dround(x[,-3], roundGreaterThan1 = TRUE)
+  lapply(props, FUN=function(p){
+    sn <- floor(p*nrow(x))
+    i <- sample(seq_len(nrow(x)), sn)
+    j <- sample(seq_len(sn),seq_len(sn))
+    x[i,] <- x[i[j],]
+    x
+  })
+}), recursive=FALSE)
+saveRDS(deas2, file="dilutedDatasets.rds")
+```
+
