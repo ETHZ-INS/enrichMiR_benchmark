@@ -1,0 +1,352 @@
+---
+title: "Bartel enrichMiR analysis"
+author: "Tomás Germade"
+date: "20/12/2019"
+output:
+    html_document:
+        toc: true
+        toc_float: true
+        theme: 'cerulean'
+        highlight: 'tango'
+        code_folding: hide
+        df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries}
+suppressPackageStartupMessages({
+  library(SummarizedExperiment)
+  library(SEtools)
+  library(ggplot2)
+  library(plgINS)
+  library(edgeR)
+  library(DT)
+  library(viridis)
+  library(RColorBrewer)
+  library(data.table)
+  library(dplyr)
+  library(tibble)
+  library(cowplot)
+  library(matrixStats)
+  library(igraph)
+  library(RUVSeq)
+})
+devtools::load_all("~/master_19_20/enrichMiR/enrichMiR/")
+
+ips_wd <- "~/master_19_20/enrichMiR_benchmark/"
+setwd(ips_wd)
+```
+
+# load dataset
+
+```{r import hela bartel}
+
+# import
+dea.list.hela <- readRDS("bartel_HeLa.deaList.rds")
+```
+
+```{r import hek bartel}
+
+# import
+dea.list.hek <- readRDS("bartel_HEK.deaList.rds")
+```
+
+
+```{r variables, eval=TRUE}
+
+# define variables
+stages <- unique(as.numeric(as.character(se.long$stage)))
+dea.names <- c("9v0", "15v9", "21v15", "27v21", "33v27", "40v33")
+```
+
+
+# enrichMiR
+
+```{r load enrichmir package}
+
+# load enrichMiR package
+devtools::load_all("~/master_19_20/enrichMiR/enrichMiR/")
+```
+
+```{r enrichmir dea function}
+
+#' getDEA
+#'
+#' @param dea.df dataframe of DEA results (an SE rowData column if generated via DEA() function)
+#'
+#' @return FDR-filtered dataframe containing c("symbol","logFC","PValue","FDR") columns
+#'
+getDEA <- function(dea.df){
+  dea <- as.data.frame(dea.df[,c("symbol","logFC", "logCPM","PValue","FDR")])
+  dea <- aggregate(dea[,-1], by=list(symbol=dea$symbol),FUN=mean)
+  rownames(dea) <- dea$symbol
+  dea <- dea[dea$FDR<.05,-1]
+  
+  lapply(dea, FUN = function(x){
+    if(any(is.infinite(x))){
+      w <- which(is.infinite(x))
+      x[w] <- max(abs(x[setdiff(which(dea$FDR<0.5),w)]))*sign(x[w])
+    }
+  })
+  return(dea)
+}
+```
+
+```{r load enrichmir ts}
+
+# load TS object
+TS <- readRDS( "~/master_19_20/iPSCdiff/enrichMiR/TargetScan_all.rds")
+```
+
+```{r enrichmir e, warning=FALSE, message=FALSE, eval=TRUE}
+
+# run enrichMiR on all objects of dea.list
+e.list <- lapply(dea.list.hela, FUN = function(x) 
+  enrichMiR(DEA=as.data.frame(x), TS=TS, cleanNames=TRUE))
+
+names(e.list) <- dea.names
+
+# save e object
+saveRDS(e.list, "~/master_19_20/iPSCdiff/data/eResults.highTempRes.list.rds")
+```
+
+```{r load enrichmir e}
+
+# load TS object
+e.list <- readRDS( "~/master_19_20/iPSCdiff/data/eResults.highTempRes.list.rds")
+```
+
+```{r family table}
+
+# how many miRNA families (lower) have x (upper) miRNAs ascribed
+table(as.numeric(table(unlist(metadata(TS)$families))))
+# most miRNA families consist of 1 single miRNA
+```
+
+
+```{r test comparison functions}
+
+#' testAnalysis
+#'
+#' @param df dataframe containing DEA results (located in rowData(SE) if generated via DEA() function)
+#' @param e dataframe of specific enrichMiR test results
+#' @param families vector containing miRNA family ID (seed) for each miRNA (located in metadata of TS #'                  if generated via getTS() function)
+#'
+#' @return dataframe containing enrichMiR test results & miRNA logFC & DEA FDR results (input for 
+#'              testPlot() function)
+#'
+testAnalysis <- function(df, e, families){
+  
+  # subset to get miRNAs present in TS
+  df.sub <- df[rownames(df) %in% names(families),]
+  
+  # get family vector in same order as miRNA DEA dataframe
+  fam <- families[row.names(df.sub)]
+  # append family vector to miRNA DEA dataframe
+  df.sub <- cbind(df.sub, family=fam)
+  
+  # aggregate the DEA dataframe by family ID
+  df.agg <- aggregate(df.sub[,colnames(df.sub)!="family"], by=df.sub[,"family",drop=FALSE], FUN=mean)
+  row.names(df.agg) <- df.agg$family
+
+  # subset DEA dataframe
+  df.sel <- df.agg[, c("logFC","FDR")]
+  # rename columns to not confuse with columns inside enrichMiR test results
+  colnames(df.sel) <- paste0("dea.",colnames(df.sel))
+
+  # for each tx in test get its ID inside the DEA dataframe
+  if(!is.null(e$family)) row.names(e) <- e$family
+  test <- cbind(e, df.sel[rownames(e),])
+
+  return(test)
+}
+
+
+#' testPlot
+#'
+#' @param test dataframe containing results of one of the enrichMiR tests
+#'
+#' @return plot of test score vs. miRNA logFC with FDR value information
+#'
+testPlot <- function(test){
+  
+  library(ggplot2)
+  
+  # plot or print dataframe
+  gg.options <- list(geom_point(), 
+      geom_hline(yintercept=0, color="red", linetype="dashed"),
+      geom_vline(xintercept=0, color="red", linetype="dashed"))
+  
+  if(any(colnames(test)=="enrichment")){
+    ggplot(test, aes(dea.logFC, enrichment, size=-log10(FDR), colour=-log10(dea.FDR))) + 
+      gg.options
+  } else if(any(colnames(test)=="normalizedEnrichment")){
+    ggplot(test, aes(dea.logFC, normalizedEnrichment, size=-log10(FDR), colour=-log10(dea.FDR))) +
+      gg.options
+  } else if(any(colnames(test)=="logFC")){
+    ggplot(test, aes(dea.logFC, logFC, size=-log10(FDR), colour=-log10(dea.FDR))) + 
+      gg.options
+  } else if(any(colnames(test)=="wilcox.pvalue")){
+    ggplot(test, aes(dea.logFC, -log10(wilcox.pvalue), size=-log10(FDR), colour=-log10(dea.FDR))) + 
+      gg.options
+  } else if(any(colnames(test)=="ks.pvalue")){
+    ggplot(test, aes(dea.logFC, -log10(ks.pvalue), size=-log10(FDR), colour=-log10(dea.FDR))) + 
+      gg.options
+  } else {
+    cat("No plot available.\n")
+  }
+}
+```
+
+```{r test analysis}
+
+# testAnalysis calling for individual DEAs & tests
+#testAnalysis(rowData(se.short)$DEA.9v0, e.list$`9v0`$modScore, metadata(TS)$families)
+#testAnalysis(rowData(se.short)$DEA.40v33, e.list$`40v33`$michael.down, metadata(TS)$families)
+
+# for every stage comparison analyze every enrichMiR test
+result.list <- lapply(seq_along(dea.names), FUN=function(i) 
+  lapply(e.list[[dea.names[i]]]@res, FUN=function(x){
+    testAnalysis(rowData(se.short)[[dea.df.names[i]]], x, metadata(TS)$families)
+    })
+  )
+
+test.names <- names(e.list$`9v0`@res)
+```
+
+
+## EnrichMiR 9v0 {.tabset .tabset-fade}
+```{r test comparison 9v0, results="asis", fig.width=8, warning=FALSE, message=FALSE}
+
+for(i in seq_along(result.list[[1]])){
+  
+  res <- result.list[[1]][[i]]
+  
+  # disregard the following columns (for clarity)
+  sel <- !grepl(c("features"),colnames(res)) & !grepl(c("leadingEdge"),colnames(res)) & 
+    colnames(res)!="family"
+  
+  # generate tab
+  cat("### ", test.names[i],"\n\n")
+  # print plot
+  print(testPlot(res))
+  cat("\n\n")
+  # round & print dataframe
+  res[,sel & sapply(res,class)=="numeric"] <- round(res[,sel & sapply(res,class)=="numeric"],3)
+  print(knitr::kable(head(res[,sel], 10)))
+  cat("\n\n")
+}
+```
+  
+## EnrichMiR 15v9 {.tabset .tabset-fade}
+```{r test comparison 15v9, results="asis", fig.width=8, warning=FALSE, message=FALSE}
+
+for(i in seq_along(result.list[[2]])){
+  
+  res <- result.list[[2]][[i]]
+  
+  sel <- !grepl(c("features"),colnames(res)) & !grepl(c("leadingEdge"),colnames(res)) & 
+    colnames(res)!="family"
+  
+  cat("### ", test.names[i],"\n\n")
+  print(testPlot(res))
+  cat("\n\n")
+  res[,sel & sapply(res,class)=="numeric"] <- round(res[,sel & sapply(res,class)=="numeric"],3)
+  print(knitr::kable(head(res[,sel], 10)))
+  cat("\n\n")
+}
+```
+  
+## EnrichMiR 21v15 {.tabset .tabset-fade}
+```{r test comparison 21v15, results="asis", fig.width=8, warning=FALSE, message=FALSE}
+
+for(i in seq_along(result.list[[3]])){
+  
+  res <- result.list[[3]][[i]]
+  
+  sel <- !grepl(c("features"),colnames(res)) & !grepl(c("leadingEdge"),colnames(res)) & 
+    colnames(res)!="family"
+  
+  cat("### ", test.names[i],"\n\n")
+  print(testPlot(res))
+  cat("\n\n")
+  res[,sel & sapply(res,class)=="numeric"] <- round(res[,sel & sapply(res,class)=="numeric"],3)
+  print(knitr::kable(head(res[,sel], 10)))
+  cat("\n\n")
+}
+```
+  
+## EnrichMiR 27v21 {.tabset .tabset-fade}
+```{r test comparison 27v21, results="asis", fig.width=8, warning=FALSE, message=FALSE}
+
+for(i in seq_along(result.list[[4]])){
+  
+  res <- result.list[[4]][[i]]
+  
+  sel <- !grepl(c("features"),colnames(res)) & !grepl(c("leadingEdge"),colnames(res)) & 
+    colnames(res)!="family"
+  
+  cat("### ", test.names[i],"\n\n")
+  print(testPlot(res))
+  cat("\n\n")
+  res[,sel & sapply(res,class)=="numeric"] <- round(res[,sel & sapply(res,class)=="numeric"],3)
+  print(knitr::kable(head(res[,sel], 10)))
+  cat("\n\n")
+}
+```
+  
+## EnrichMiR 33v27 {.tabset .tabset-fade}
+```{r test comparison 33v27, results="asis", fig.width=8, warning=FALSE, message=FALSE}
+
+for(i in seq_along(result.list[[5]])){
+  
+  res <- result.list[[5]][[i]]
+  
+  sel <- !grepl(c("features"),colnames(res)) & !grepl(c("leadingEdge"),colnames(res)) & 
+    colnames(res)!="family"
+  
+  cat("### ", test.names[i],"\n\n")
+  print(testPlot(res))
+  cat("\n\n")
+  res[,sel & sapply(res,class)=="numeric"] <- round(res[,sel & sapply(res,class)=="numeric"],3)
+  print(knitr::kable(head(res[,sel], 10)))
+  cat("\n\n")
+}
+```
+  
+## EnrichMiR 40v33 {.tabset .tabset-fade}
+```{r test comparison 40v33, results="asis", fig.width=8, warning=FALSE, message=FALSE}
+
+for(i in seq_along(result.list[[6]])){
+  
+  res <- result.list[[6]][[i]]
+  
+  sel <- !grepl(c("features"),colnames(res)) & !grepl(c("leadingEdge"),colnames(res)) & 
+    colnames(res)!="family"
+  
+  cat("### ", test.names[i],"\n\n")
+  print(testPlot(res))
+  cat("\n\n")
+  res[,sel & sapply(res,class)=="numeric"] <- round(res[,sel & sapply(res,class)=="numeric"],3)
+  print(knitr::kable(head(res[,sel], 10)))
+  cat("\n\n")
+}
+```
+  
+The tests show few significant regulation instances. That's why we try to do the analysis instead of on pairwise stages, on combined stages: 0,9,15 vs 21,27,33,40
+
+
+
+```{r, eval=FALSE}
+test <- DEA(se.long, name="test", use = se.long$stage %in% stages[-c(1:3)], model=~stage, calcLogFC = TRUE, 
+            testCoeff = c("stage21","stage27","stage33","stage40"))
+
+
+DEA(se.long, name = dea.names[i], use = se.long$stage %in% c(stages[i],stages[i+1]) , 
+              model = ~stage, calcLogFC = FALSE)
+```
+
+
