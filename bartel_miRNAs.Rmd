@@ -127,13 +127,13 @@ names(dea.list.hela) <- levels(dd$miRNA)[-1]
 ```{r export hela bartel}
 
 # export
-saveRDS(dea.list.hela, "~/master_19_20/iPSCdiff/enrichMiR/bartel_HeLa.deaList.rds")
+saveRDS(dea.list.hela, "~/master_19_20/enrichMiR_benchmark/bartel_HeLa.deaList.rds")
 ```
 
 ```{r import hela bartel}
 
 # import
-dea.list.hela <- readRDS("~/master_19_20/iPSCdiff/enrichMiR/bartel_HeLa.deaList.rds")
+dea.list.hela <- readRDS("~/master_19_20/enrichMiR_benchmark/bartel_HeLa.deaList.rds")
 ```
 
 ### HEK
@@ -174,13 +174,13 @@ names(dea.list.hek) <- levels(dd2$miRNA)[-1]
 ```{r export hek bartel}
 
 # export
-saveRDS(dea.list.hek, "~/master_19_20/iPSCdiff/enrichMiR/bartel_HEK.deaList.rds")
+saveRDS(dea.list.hek, "~/master_19_20/enrichMiR_benchmark/bartel_HEK.deaList.rds")
 ```
 
 ```{r import hek bartel}
 
 # import
-dea.list.hek <- readRDS("~/master_19_20/iPSCdiff/enrichMiR/bartel_HEK.deaList.rds")
+dea.list.hek <- readRDS("~/master_19_20/enrichMiR_benchmark/bartel_HEK.deaList.rds")
 ```
 
 
@@ -202,13 +202,13 @@ names(dea.list.hek_nb) <- levels(dd2$miRNA)[-1]
 ```{r export hek no batch bartel}
 
 # export
-saveRDS(dea.list.hek_nb, "~/master_19_20/iPSCdiff/enrichMiR/bartel_HEK_noBatch.deaList.rds")
+saveRDS(dea.list.hek_nb, "~/master_19_20/enrichMiR_benchmark/bartel_HEK_noBatch.deaList.rds")
 ```
 
 ```{r import hek no batch bartel}
 
 # import
-dea.list.hek_nb <- readRDS("~/master_19_20/iPSCdiff/enrichMiR/bartel_HEK_noBatch.deaList.rds")
+dea.list.hek_nb <- readRDS("~/master_19_20/enrichMiR_benchmark/bartel_HEK_noBatch.deaList.rds")
 ```
 
 ## HMs
