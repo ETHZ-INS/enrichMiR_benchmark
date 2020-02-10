@@ -66,6 +66,7 @@ ggplot(dat, aes(FPR, TPR, colour=method)) + geom_line() + geom_point(size=3) +
 
 
 doBenchmark <- function(res, TP){
+  res <- res[order(res$FDR),]
   res <- lapply(res, FUN=function(x){
     if("family" %in% colnames(x)) row.names(x) <- x$family
     x$truth <- row.names(x) %in% TP
@@ -74,6 +75,7 @@ doBenchmark <- function(res, TP){
   })
   data.frame( method=names(res),
               detPPV=sapply(res, FUN=function(x) 1/which(x$truth)[1] ),
+              FP.atFDR05=sapply(res, FUN=function(x) sum(!x$truth & x$FDR<0.05)),
               log10QRatio=sapply(res, FUN=function(x){
                 tp1 <- -log10(x$FDR[which(x$truth)[1]])
                 fp1 <- -log10(x$FDR[which(!x$truth)[1]])
