@@ -45,7 +45,6 @@ e <- enrichMiR(dea, TS)
 TP <- unique(as.character(fams[grep("miR-122$|miR-122-",names(fams))]))
 thresholds <- c(0,10^(-10:-3),0.005,0.01,0.025,0.05,0.075,0.1,0.15,0.2,0.25,0.3,0.5)
 
-
 dat <- dplyr::bind_rows(lapply(e@res, FUN=function(x){
   if("family" %in% colnames(x)) row.names(x) <- x$family
   x$truth <- row.names(x) %in% TP
@@ -65,18 +64,28 @@ dat <- dplyr::bind_rows(lapply(e@res, FUN=function(x){
 ggplot(dat, aes(FPR, TPR, colour=method)) + geom_line() + geom_point(size=3) + 
   scale_x_log10()  + scale_colour_manual(values=cols)
 
-# PPV at detection
-detPPV <- sapply(split(dat,dat$method), FUN=function(x){
-  if(!any(x$TPR>=1)) return(0)
-  w <- which(x$TPR>=1)[1]
-  x$TP[w]/x$P[w]
-})
 
-auc <- sapply(split(dat,dat$method), FUN=function(x){
-    if(!any(x$TPR>=1)) return(0)
-    x <- x$FPR[which(x$TPR>=1)[1]]
-    x/2 + (1-x)
-})
+doBenchmark <- function(res, TP){
+  res <- lapply(res, FUN=function(x){
+    if("family" %in% colnames(x)) row.names(x) <- x$family
+    x$truth <- row.names(x) %in% TP
+    x$FDR[is.na(x$FDR)] <- 1
+    x
+  })
+  data.frame( method=names(res),
+              detPPV=sapply(res, FUN=function(x) 1/which(x$truth)[1] ),
+              log10QRatio=sapply(res, FUN=function(x){
+                tp1 <- -log10(x$FDR[which(x$truth)[1]])
+                fp1 <- -log10(x$FDR[which(!x$truth)[1]])
+                tp1-fp1-(min(tp1,fp1))
+              }),
+              log10QrelIncrease=sapply(res, FUN=function(x){
+                tp1 <- -log10(x$FDR[which(x$truth)[1]])
+                fp1 <- -log10(x$FDR[which(!x$truth)[1]])
+                (tp1-fp1)/(min(tp1,fp1))
+              }))
+  
+}
 ```
 
 
