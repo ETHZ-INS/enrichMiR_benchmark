@@ -34,16 +34,12 @@ suppressPackageStartupMessages({
   library(igraph)
   library(RUVSeq)
 })
-devtools::load_all("~/master_19_20/enrichMiR/enrichMiR/")
-
-ips_wd <- "~/master_19_20/enrichMiR_benchmark/"
-setwd(ips_wd)
+devtools::load_all("../enrichMiR/")
 ```
 
 # load dataset
 
 ```{r import hela bartel}
-
 # import
 dea.list.hela <- readRDS("bartel_HeLa.deaList.rds")
 ```
@@ -64,12 +60,6 @@ dea.names <- c("9v0", "15v9", "21v15", "27v21", "33v27", "40v33")
 
 
 # enrichMiR
-
-```{r load enrichmir package}
-
-# load enrichMiR package
-devtools::load_all("~/master_19_20/enrichMiR/enrichMiR/")
-```
 
 ```{r enrichmir dea function}
 
@@ -96,9 +86,9 @@ getDEA <- function(dea.df){
 ```
 
 ```{r load enrichmir ts}
-
 # load TS object
-TS <- readRDS( "~/master_19_20/iPSCdiff/enrichMiR/TargetScan_all.rds")
+TS <- readRDS( "../iPSCdiff/enrichMiR/data/TargetScan_all.rds")
+TS <- TS[!duplicated(TS[,c(1,3)]),]
 ```
 
 ```{r enrichmir e, warning=FALSE, message=FALSE, eval=TRUE}
