@@ -54,7 +54,7 @@ output.e <- "data/bartel.hela.e.TSperm.rds"
 #output.e <- "data/bartel.hek.e.TSperm.rds"
 
 # number of cores for high runtime functions
-cores <- 10
+cores <- 5
 
 # set number of replicates per permutation proportion
 nrep <- 3
@@ -298,17 +298,21 @@ for(i in dea.names){
 props.all <- c(original="original", props)
 ```
 
-```{r enrichmir e, warning=FALSE, message=FALSE, eval=T}
+```{r enrichmir e, warning=FALSE, message=FALSE, eval=FALSE}
 
-#tests <- c("areamir","overlap","michael","KS","KS2","MW")
+tests <- c("areamir","overlap","michael","KS","KS2","MW")
+# all tests except WO:
+tests <- c("overlap","michael","mw","ks","ks2","areamir","areamir2")
+# all tests
+tests <- c("overlap","michael","wo","mw","ks","ks2","gsea","gseamod","modscore","modsites","areamir","areamir2")
 tests <- NULL
-cores <- 4
+cores <- 8
 
 # run enrichMiR on all objects of dea.list (high runtime!)
 
 ## foreach: doesnt work
-# library(foreach)
-# library(doParallel)
+library(foreach)
+library(doParallel)
 # cl <- makeCluster(cores)
 # registerDoParallel(cl, cores=cores)
 # chunk.size <- length(dea.names)/cores
@@ -320,10 +324,18 @@ cores <- 4
 #       })
 #     }
 # }
-# stopImplicitCluster()
+#stopImplicitCluster()
 # stopCluster(cl)
 
-## mclapply: did work once
+## foreach: Pierre's code (works, but 1 core)
+res <- foreach( dea=dea.list, 
+                TS=unlist(TS.list,recursive=FALSE) ) %dopar% {
+                  enrichMiR( as.data.frame(dea), TS=TS, miRNA.expression=mirexpr, 
+                             cleanNames=TRUE, tests=tests )
+                }
+
+## mclapply (works, but 1 core; all cores when reduced tests var)
+## looks like GSEA, WO, mods are problematic
 library(parallel)
 # multicores on Linux
 e.list <- mclapply(dea.names, FUN=function(i){
@@ -331,31 +343,59 @@ e.list <- mclapply(dea.names, FUN=function(i){
       enrichMiR(DEA=as.data.frame(dea.list[[i]]), TS=TS.list[[i]][[j]], miRNA.expression=mirexpr, 
                 cleanNames=TRUE, tests=tests)
       })
-  }, mc.cores = 4 )
+  }, mc.cores = cores )
+## mcmapply: inspired by Pierre's code
+res <- mcmapply(dea=dea.list, 
+                TS=unlist(TS.list,recursive=FALSE), 
+                FUN=function(x){
+                  enrichMiR( as.data.frame(dea), TS=TS, miRNA.expression=mirexpr, 
+                             cleanNames=TRUE, tests=tests )
+                  }, mc.cores = cores )
 
 
-## bplapply: doesnt work
-# e.list <- bplapply(dea.names, FUN=function(i){
-#   lapply(names(props.all), FUN=function(j){
-#       enrichMiR(DEA=as.data.frame(dea.list[[i]]), TS=TS.list[[i]][[j]], miRNA.expression=mirexpr, 
-#                 cleanNames=TRUE, tests=tests)
-#       })
-#   }, BPPARAM = MulticoreParam(cores, progressbar = TRUE) )
+## bplapply: doesnt work at all
+e.list <- bplapply(dea.names[1:4], FUN=function(i){
+  lapply(names(props.all), FUN=function(j){
+      enrichMiR(DEA=as.data.frame(dea.list[[i]]), TS=TS.list[[i]][[j]], miRNA.expression=mirexpr,
+                cleanNames=TRUE, tests=tests)
+      })
+  }, BPPARAM = MulticoreParam(cores, progressbar = TRUE) )
 
 
+## bpmapply: Pierre's code
+res <- bpmapply(dea=dea.list, 
+                TS=unlist(TS.list,recursive=FALSE), 
+                BPPARAM=MulticoreParam(4, threshold="TRACE"), FUN=function(x){
+                  enrichMiR( as.data.frame(dea), TS=TS, miRNA.expression=mirexpr, cleanNames=TRUE, tests=tests )
+                  } )
+
+
+## serial run
+e.list <- lapply(dea.names, FUN=function(i){
+  lapply(names(props.all), FUN=function(j){
+      enrichMiR(DEA=as.data.frame(dea.list[[i]]), TS=TS.list[[i]][[j]], miRNA.expression=mirexpr, 
+                cleanNames=TRUE, tests=tests)
+      })
+  })
+
+
+# naming
 names(e.list) <- dea.names
 for(i in dea.names){
   names(e.list[[i]]) <- names(props.all)
 }
+
+# use this between parallel runs
+gc(verbose = T)
 ```
 
-```{r save enrichmir e, eval=F}
+```{r save enrichmir e, eval=FALSE}
 
 # save e object
 saveRDS(e.list, output.e)
 ```
 
-```{r load enrichmir e, eval=F}
+```{r load enrichmir e, eval=TRUE}
 
 # load TS object
 e.list <- readRDS(output.e)
@@ -518,7 +558,7 @@ mean.datasets <- lapply( unique(df$treatment), FUN=function(x)
   )
 names(mean.datasets) <- dea.names
 for(i in dea.names){
-  names(mean.datasets[[i]]) <- props.all
+  names(mean.datasets[[i]]) <- unique(df$prop)
 }
 mean.datasets
 ```
@@ -538,7 +578,7 @@ mean.methods <- lapply( unique(df$method), FUN=function(x)
   )
 names(mean.methods) <- unique(df$method)
 for(i in unique(df$method)){
-  names(mean.methods[[i]]) <- props.all
+  names(mean.methods[[i]]) <- unique(df$prop)
 }
 mean.methods
 ```
@@ -555,7 +595,7 @@ sens.methods <- lapply( unique(df$method), FUN=function(x)
   )
 names(sens.methods) <- unique(df$method)
 for(i in unique(df$method)){
-  names(sens.methods[[i]]) <- props.all
+  names(sens.methods[[i]]) <- unique(df$prop)
 }
 sens.methods
 ```
