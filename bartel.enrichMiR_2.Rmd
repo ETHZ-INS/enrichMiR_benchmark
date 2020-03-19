@@ -390,9 +390,9 @@ gc(verbose = T)
 ```
 
 
-```{r enrichmir e combined function, warning=FALSE, message=FALSE, eval=TRUE}
+```{r enrichmir e combined fisher function, warning=FALSE, message=FALSE, eval=TRUE}
 
-#' testCombine
+#' testCombine.fisher
 #'
 #' @param e1 dataframe: enrichMiR test result, e.g. e.list$`miR-122`$original@res$modScore
 #' @param e2 same as e1
@@ -401,7 +401,7 @@ gc(verbose = T)
 #'
 #' @return dataframe containing fisher-aggregated pvalues & FDR values of the supplied enrichMiR test results
 #' 
-testCombine <- function(e1, e2, e3, p.colnames){
+testCombine.fisher <- function(e1, e2, e3, p.colnames){
   # check input
   if(!any(colnames(e1) %in% p.colnames[1]) | !any(colnames(e2) %in% p.colnames[2]) | !any(colnames(e3) %in% p.colnames[3])){
     stop("p.colnames contains invalid column names")
@@ -414,6 +414,7 @@ testCombine <- function(e1, e2, e3, p.colnames){
     x })
   # get common results
   fam <- intersect(intersect(rownames(e[[1]]), rownames(e[[2]])), rownames(e[[3]]))
+  # combine
   p.combined <- sapply(fam, FUN=function(x) aggregation::fisher( c(e[[1]][x,p.colnames[1]], e[[2]][x,p.colnames[2]], e[[3]][x,p.colnames[3]]) )
                  )
   fdr.combined <- p.adjust(p.combined, method="fdr")
@@ -425,28 +426,86 @@ testCombine <- function(e1, e2, e3, p.colnames){
 }
 ```
 
+```{r enrichmir e combined geom function, warning=FALSE, message=FALSE, eval=TRUE}
+
+#' testCombine.geom
+#'
+#' @param e1 dataframe: enrichMiR test result, e.g. e.list$`miR-122`$original@res$modScore
+#' @param e2 same as e1
+#' @param e3 same as e1
+#' @param p.colnames character vector containing column names of pvalues
+#'
+#' @return dataframe containing fisher-aggregated pvalues & FDR values of the supplied enrichMiR test results
+#' 
+testCombine.geom <- function(e1, e2, e3, p.colnames){
+  # check input
+  if(!any(colnames(e1) %in% p.colnames[1]) | !any(colnames(e2) %in% p.colnames[2]) | !any(colnames(e3) %in% p.colnames[3])){
+    stop("p.colnames contains invalid column names")
+  }
+  # miRNA families as rownames
+  e <- lapply(list(e1,e2,e3), FUN=function(x){
+    if(any(colnames(x) %in% "family")){
+      rownames(x) <- x[,"family"]
+      }
+    x })
+  # get common results
+  fam <- intersect(intersect(rownames(e[[1]]), rownames(e[[2]])), rownames(e[[3]]))
+  # combine
+  p.combined <- sapply(fam, FUN=function(x) exp( mean( c(log(e[[1]][x,p.colnames[1]]), log(e[[2]][x,p.colnames[2]]), log(e[[3]][x,p.colnames[3]])) ))
+                 )
+  fdr.combined <- p.adjust(p.combined, method="fdr")
+  # output
+  return(
+    data.frame(pvalue=p.combined[names(fdr.combined[order(fdr.combined)])], 
+               FDR=fdr.combined[order(fdr.combined)])
+    )
+}
+```
 
 ```{r load enrichmir e pre, eval=FALSE}
 
 # load TS object
 e.list <- readRDS(output.e)
+
+# get rid of extra tests
+for(i in names(e.list)){ 
+  for(j in names(e.list[[i]])){
+    e.list[[i]][[j]]@res <- e.list[[i]][[j]]@res[1:18]
+  }
+}
 ```
 
 ```{r enrichmir e combined, warning=FALSE, message=FALSE, eval=FALSE}
 
 # combine michael, wEN and modScore results
+## fisher aggregation
 for(i in names(e.list)){ 
   for(j in names(e.list[[i]])){
-    comb <- testCombine(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$wEN.down, e.list[[i]][[j]]@res$modScore, c("over.pvalue","over.pvalue","pvalue"))
-    e.list[[i]][[j]]@res$combTest.1 <- comb
+    comb <- testCombine.fisher(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$wEN.down, e.list[[i]][[j]]@res$modScore, c("over.pvalue","over.pvalue","pvalue"))
+    e.list[[i]][[j]]@res$combFish.1 <- comb
+    }
+}
+## geometric mean
+for(i in names(e.list)){ 
+  for(j in names(e.list[[i]])){
+    comb <- testCombine.geom(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$wEN.down, e.list[[i]][[j]]@res$modScore, c("over.pvalue","over.pvalue","pvalue"))
+    e.list[[i]][[j]]@res$combGeom.1 <- comb
     }
 }
 
 # combine michael, aREAmir and KS2 results
+## fisher aggregation
 for(i in names(e.list)){ 
   for(j in names(e.list[[i]])){
-    comb <- testCombine(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$aREAmir, e.list[[i]][[j]]@res$KS2, c("over.pvalue","p.value","ks.pvalue.down"))
-    e.list[[i]][[j]]@res$combTest.2 <- comb
+    comb <- testCombine.fisher(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$aREAmir, e.list[[i]][[j]]@res$KS2, c("over.pvalue","p.value","ks.pvalue.down"))
+    e.list[[i]][[j]]@res$combFish.2 <- comb
+    }
+}
+## geometric mean
+for(i in names(e.list)){ 
+  for(j in names(e.list[[i]])){
+    comb <- testCombine.geom(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$aREAmir, e.list[[i]][[j]]@res$KS2, c("over.pvalue","p.value","ks.pvalue.down"))
+    e.list[[i]][[j]]@res$combGeom.2 <- comb
     }
 }
 
