@@ -1,0 +1,205 @@
+---
+title: "Bartel enrichMiR exon analysis"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+    html_document:
+        toc: true
+        toc_float: true
+        theme: 'cerulean'
+        highlight: 'tango'
+        df_print: paged
+---
+
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(SummarizedExperiment)
+  library(SEtools)
+  library(ggplot2)
+  library(plgINS)
+  library(edgeR)
+})
+```
+
+## Loading
+
+```{r bartel import, message=FALSE, warning=FALSE, eval=TRUE}
+
+# load splice SE (the individual HeLa & HEK datasets are only used for colData generation)
+se.splicing <- readRDS("data/raw/bartel.splicing.raw.SE.rds")
+se.hela <- readRDS( "data/bartel.hela.DEA.SE.rds")
+se.hek <- readRDS("data/bartel.hek.DEA.SE.rds")
+```
+
+```{r bartel modify, message=FALSE, warning=FALSE, eval=TRUE}
+
+# filter raw data
+filter <- c(10,2)
+se.splicing <- se.splicing[which(rowSums(assay(se.splicing) >= filter[1]) >= filter[2]),]
+
+# create colData info for splicing SE
+colData(se.splicing) <- cbind(colData(se.splicing), rbind(colData(se.hela), colData(se.hek))[colnames(se.splicing),1:3])
+
+```
+
+```{r exon dea function, message=FALSE, warning=FALSE, eval=TRUE}
+
+
+#' exonDEA
+#'
+#' Generates control samples out of the average values over all supplied samples, combines spliced and unspliced
+#' assays, calculates their logCPM & log2FC data and performs DEA over all treatments & individual ones. 
+#' All is assembled into one SE object. 
+#' 
+#'
+#' @param se SummarizedExperiment object containing assays of raw counts of spliced & unspliced tx
+#'
+#' @return an SE object of combined spliced and unspliced data
+#' 
+exonDEA <- function(se){
+  
+  # allocation
+  
+  e1 <- assays(se)$spliced
+  e2 <- assays(se)$unspliced
+  readtype1 <- "spliced"
+  readtype2 <- "unspliced"
+  
+  
+  # generate control
+  
+  ## create logcpm assays for both spliced & unspliced assays
+  assays(se)$logcpm.spliced <- log1p(cpm(calcNormFactors(DGEList(assays(se)$spliced))))
+  assays(se)$logcpm.unspliced <- log1p(cpm(calcNormFactors(DGEList(assays(se)$unspliced))))
+
+  ## generate a 'control' sample out of the median normalized counts over all samples
+  genCTRL <- function(se, logcpm){
+    e.ctrl <- sapply(unique(se$Batch), ls=min(colSums(assay(se))), 
+                           FUN=function(x,ls){
+                             rowMedians(exp(assays(se)[[logcpm]][,se$Batch==x])-1) * ls/1000000
+                             }
+                           )
+    ### generate colnames
+    n.cols <- sapply( unique(se$Batch), FUN=function(x)
+      var_name <- paste("CTRL", x, sep=".") )
+    colnames(e.ctrl) <- n.cols
+    rownames(e.ctrl) <- rownames(se)
+    return(e.ctrl)
+  }
+  
+  e.ctrl1 <- genCTRL(se, "logcpm.spliced")
+  e.ctrl2 <- genCTRL(se, "logcpm.unspliced")
+  
+  
+  ## add control samples to assays & generate DGEList object
+  dds1 <- DGEList(cbind(e1, e.ctrl1))
+  dds2 <- DGEList(cbind(e2, e.ctrl2))
+  
+  ## combine the spliced & unspliced assays
+  dds <- cbind(dds1, dds2)
+
+  
+  # generate colData
+  
+  ## generate colData info for combined assay
+  dd1 <- colData(se)[,c("Batch","miRNA","Cell_Line")]
+  dd.ctrl1 <- data.frame(Batch=unique(se$Batch), 
+                         miRNA="CTRL", 
+                         Cell_Line=unique(as.character(dd1$Cell_Line)) )
+  dd1 <- rbind(dd1, dd.ctrl1)
+  dd1$readtype <- readtype1
+  
+  ## duplicate dd to have data for combined spliced & unspliced assay
+  dd <- rbind(dd1, dd1)
+  dd$readtype[(nrow(dd1)+1):nrow(dd)] <- readtype2
+  dd$readtype <- as.factor(dd$readtype)
+  
+  ## rename both dds & dd object features
+  n.cols1 <- sapply(colnames(dds1), FUN=function(x)
+      var_name <- paste(x, readtype1, sep=".") )
+  n.cols2 <- sapply(colnames(dds2), FUN=function(x)
+      var_name <- paste(x, readtype2, sep=".") )
+  
+  colnames(dds) <- c(n.cols1, n.cols2)
+  rownames(dd) <- c(n.cols1, n.cols2)
+  
+
+  # DEA
+  
+  dd$miRNA <- relevel(droplevels(dd$miRNA), ref="CTRL")
+  dd$readtype <- relevel(dd$readtype, ref="unspliced")
+  ## To do the normalization
+  dds <- calcNormFactors(dds)
+  ## models
+  mm <- model.matrix(~readtype*miRNA, data=dd)
+  mm0 <- model.matrix(~readtype+miRNA, data=dd)
+  testCoeff <- setdiff(colnames(mm), colnames(mm0))
+  ## estimate dispersion
+  dds <- estimateDisp(dds,mm)
+  ## fit negative binomial distribution on counts per gene (use glmFit for few replicates)
+  fit <- glmFit(dds, mm)
+  ## fit a GLM on the data
+  lrt.comb <- glmLRT(fit, testCoeff)
+  ## top genes that change relative to stage 0
+  res.comb <- as.data.frame(topTags(lrt.comb, Inf))
+  ## fit linear model dropping one sample at a time (using multiple cores)
+  res.list <- bplapply( testCoeff, BPPARAM=MulticoreParam(8), FUN=function(x){
+    as.data.frame(topTags(glmLRT(fit, x),Inf))
+  })
+  dea.names <- gsub("readtype","", testCoeff)
+  dea.names <- make.names(gsub(":miRNA",".", dea.names))
+  colnames(res.comb)[grepl("logFC",colnames(res.comb))] <- paste0("logFC.", dea.names)
+  names(res.list) <- paste0("DEA.",dea.names)
+  
+  
+  # generate final SE object
+  
+  ## SE object with logCPM & logFC assays
+  se <- SummarizedExperiment(assays=list(counts=dds$counts), 
+                             rowData=rowData(se), 
+                             colData=dd) 
+  assays(se)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se)))))
+  se <- SEtools::log2FC(se, controls = se$miRNA=="CTRL", by = paste(se$Batch, se$readtype), fromAssay = "logcpm")
+
+  ## add DEAs
+  rowData(se)$DEA.spliced.all <- as.data.frame(res.comb)
+  for(i in paste0("DEA.",dea.names)){
+    rowData(se)[[i]] <- as.data.frame(res.list[[i]])
+  }
+  
+  
+  # output
+  
+  return(se)
+}
+```
+
+```{r exon dea, message=FALSE, warning=FALSE, eval=TRUE}
+
+
+# get dds (DGEList object) & dd (DataFrame) for both HEK & HeLa cell lines
+se.hela <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HeLa"])
+se.hek <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HEK293FT"])
+```
+
+```{r heatmap, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+# logFC heatmap HeLa
+SEtools::sehm(se.hela, row.names(se.hela)[rowData(se.hela)$DEA.spliced.all$FDR < 0.01], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = TRUE, assayName = "log2FC")
+# logFC heatmap HEK
+SEtools::sehm(se.hek, row.names(se.hek)[rowData(se.hek)$DEA.spliced.all$FDR < 0.01], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = TRUE, assayName = "log2FC")
+```
+
