@@ -86,12 +86,18 @@ exonDEA <- function(se, model, model0=~1){
   assays(se)$logcpm.unspliced <- log1p(cpm(calcNormFactors(DGEList(assays(se)$unspliced))))
 
   ## generate a 'control' sample out of the median normalized counts over all samples
-  genCTRL <- function(se, logcpm){
-    e.ctrl <- sapply(unique(se$Batch), ls=min(colSums(assay(se))), 
+  genCTRL <- function(se, readtype, logcpm){
+    # e.ctrl <- sapply(unique(se$Batch), ls=min(colSums(assays(se)[[readtype]])),
+    #                        FUN=function(x,ls){
+    #                          rowMedians(exp(assays(se)[[logcpm]][,se$Batch==x])-1) * ls/1000000
+    #                          }
+    #                        )
+    e.ctrl <- sapply(unique(se$Batch), ls=colSums(assays(se)[[readtype]]),
                            FUN=function(x,ls){
-                             rowMedians(exp(assays(se)[[logcpm]][,se$Batch==x])-1) * ls/1000000
+                             rowMedians(expm1(assays(se)[[logcpm]][,se$Batch==x])) * median(ls[se$Batch==x])/1000000
                              }
                            )
+
     ### generate colnames
     n.cols <- sapply( unique(se$Batch), FUN=function(x)
       var_name <- paste("CTRL", x, sep=".") )
@@ -100,8 +106,8 @@ exonDEA <- function(se, model, model0=~1){
     return(e.ctrl)
   }
   
-  e.ctrl1 <- genCTRL(se, "logcpm.spliced")
-  e.ctrl2 <- genCTRL(se, "logcpm.unspliced")
+  e.ctrl1 <- genCTRL(se, readtype1, "logcpm.spliced")
+  e.ctrl2 <- genCTRL(se, readtype2, "logcpm.unspliced")
   
   
   ## add control samples to assays & generate DGEList object
