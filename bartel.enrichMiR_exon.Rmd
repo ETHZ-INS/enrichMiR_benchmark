@@ -53,6 +53,8 @@ colData(se.splicing) <- cbind(colData(se.splicing), rbind(colData(se.hela), colD
 
 ```
 
+## DEA
+
 ```{r exon dea function, message=FALSE, warning=FALSE, eval=TRUE}
 
 
@@ -67,7 +69,7 @@ colData(se.splicing) <- cbind(colData(se.splicing), rbind(colData(se.hela), colD
 #'
 #' @return an SE object of combined spliced and unspliced data
 #' 
-exonDEA <- function(se){
+exonDEA <- function(se, model, model0=~1){
   
   # allocation
   
@@ -139,11 +141,12 @@ exonDEA <- function(se){
   
   dd$miRNA <- relevel(droplevels(dd$miRNA), ref="CTRL")
   dd$readtype <- relevel(dd$readtype, ref="unspliced")
+  dd$Batch <- droplevels(dd$Batch)
   ## To do the normalization
   dds <- calcNormFactors(dds)
   ## models
-  mm <- model.matrix(~readtype*miRNA, data=dd)
-  mm0 <- model.matrix(~readtype+miRNA, data=dd)
+  mm <- model.matrix(model, data=dd)
+  mm0 <- model.matrix(model0, data=dd)
   testCoeff <- setdiff(colnames(mm), colnames(mm0))
   ## estimate dispersion
   dds <- estimateDisp(dds,mm)
@@ -173,9 +176,9 @@ exonDEA <- function(se){
   se <- SEtools::log2FC(se, controls = se$miRNA=="CTRL", by = paste(se$Batch, se$readtype), fromAssay = "logcpm")
 
   ## add DEAs
-  rowData(se)$DEA.spliced.all <- as.data.frame(res.comb)
+  rowData(se)$DEA.spliced.all <- DataFrame(res.comb[rownames(se),])
   for(i in paste0("DEA.",dea.names)){
-    rowData(se)[[i]] <- as.data.frame(res.list[[i]])
+    rowData(se)[[i]] <- DataFrame(res.list[[i]][rownames(se),])
   }
   
   
@@ -188,18 +191,98 @@ exonDEA <- function(se){
 ```{r exon dea, message=FALSE, warning=FALSE, eval=TRUE}
 
 
-# get dds (DGEList object) & dd (DataFrame) for both HEK & HeLa cell lines
-se.hela <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HeLa"])
-se.hek <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HEK293FT"])
+# bartel hela & hek DEA with exon resolution
+## combined readtype:miRNA effect
+se.hela <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HeLa"], 
+                   model = ~readtype*miRNA, model0 = ~readtype+miRNA)
+se.hek <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HEK293FT"], 
+                  model = ~readtype*miRNA, model0 = ~readtype+miRNA)
+
+# miRNA effect
+se.hela.test <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HeLa"], 
+                   model = ~readtype+miRNA, model0 = ~readtype)
+se.hek.test <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HEK293FT"], 
+                   model = ~readtype+miRNA, model0 = ~readtype)
+
+# miRNA & combined exon:miRNA effect
+se.hela.test2 <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HeLa"], 
+                   model = ~readtype*miRNA, model0 = ~readtype)
+se.hek.test2 <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HEK293FT"], 
+                   model = ~readtype*miRNA, model0 = ~readtype)
+
+# batch effect included
+se.hela.batch <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HeLa"], 
+                   model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA)
+se.hek.batch <- exonDEA(se.splicing[,se.splicing$Cell_Line=="HEK293FT"], 
+                   model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA)
 ```
 
-```{r heatmap, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+## Plots
 
-# logFC heatmap HeLa
-SEtools::sehm(se.hela, row.names(se.hela)[rowData(se.hela)$DEA.spliced.all$FDR < 0.01], gaps_at = "readtype",
-              breaks=T, do.scale = T, show_colnames = TRUE, assayName = "log2FC")
-# logFC heatmap HEK
-SEtools::sehm(se.hek, row.names(se.hek)[rowData(se.hek)$DEA.spliced.all$FDR < 0.01], gaps_at = "readtype",
-              breaks=T, do.scale = T, show_colnames = TRUE, assayName = "log2FC")
+### HeLa
+
+```{r heatmap hela, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+# logFC heatmap HeLa [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+SEtools::sehm(se.hela[,order(colData(se.hela)$miRNA)], row.names(se.hela)[rowData(se.hela)$DEA.spliced.all$FDR < 0.01], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+# logCPM heatmap HeLa spliced [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+se.hela.sp <- se.hela[,colData(se.hela)$readtype=="spliced"]
+SEtools::sehm(se.hela.sp[,order(colData(se.hela.sp)$miRNA)], row.names(se.hela.sp)[rowData(se.hela.sp)$DEA.spliced.all$FDR < 0.01], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "logcpm", anno_columns = c("miRNA","readtype"))
+
+# batch logFC heatmap HeLa [model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA]
+SEtools::sehm(se.hela.batch[,order(colData(se.hela.batch)$miRNA)], row.names(se.hela.batch)[rowData(se.hela.batch)$DEA.spliced.all$FDR < 0.01], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+
+# logFC heatmap HeLa [model = ~readtype+miRNA, model0 = ~readtype]
+SEtools::sehm(se.hela.test[,order(colData(se.hela.test)$miRNA)], row.names(se.hela.test)[rowData(se.hela.test)$DEA.spliced.all$FDR < 0.00001], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+
+# logFC heatmap HeLa [model = ~readtype*miRNA, model0 = ~readtype]
+SEtools::sehm(se.hela.test2[,order(colData(se.hela.test2)$miRNA)], row.names(se.hela.test2)[rowData(se.hela.test2)$DEA.spliced.all$FDR < 0.00001], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+```
+
+### HEK
+
+```{r heatmap hek, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+# logFC heatmap HEK [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+SEtools::sehm(se.hek[,order(colData(se.hek)$miRNA)], row.names(se.hek)[rowData(se.hek)$DEA.spliced.all$FDR < 0.01], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+# logCPM heatmap HEK spliced [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+se.hek.sp <- se.hek[,colData(se.hek)$readtype=="spliced"]
+SEtools::sehm(se.hek.sp[,order(colData(se.hek.sp)$miRNA)], row.names(se.hek.sp)[rowData(se.hek.sp)$DEA.spliced.all$FDR < 0.01], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "logcpm", anno_columns = c("miRNA","readtype"))
+
+# batch logFC heatmap HEK [model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA]
+SEtools::sehm(se.hek.batch[,order(colData(se.hek.batch)$miRNA)], row.names(se.hek.batch)[rowData(se.hek.batch)$DEA.spliced.all$FDR < 0.01], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+
+# logFC heatmap HEK [model = ~readtype+miRNA, model0 = ~readtype]
+SEtools::sehm(se.hek.test[,order(colData(se.hek.test)$miRNA)], row.names(se.hek.test)[rowData(se.hek.test)$DEA.spliced.all$FDR < 0.00001], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+
+# logFC heatmap HEK [model = ~readtype*miRNA, model0 = ~readtype]
+SEtools::sehm(se.hek.test2[,order(colData(se.hek.test2)$miRNA)], row.names(se.hek.test2)[rowData(se.hek.test2)$DEA.spliced.all$FDR < 0.00001], gaps_at = "readtype",
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+```
+
+## Stats
+
+```{r spliced ratios}
+
+# spliced v unspliced HeLa
+lib.hela.spliced <- apply(assays(se.hela[,colData(se.hela)$readtype=="spliced"])$counts, 2, function(x) sum(x))
+lib.hela.unspliced <- apply(assays(se.hela[,colData(se.hela)$readtype=="unspliced"])$counts, 2, function(x) sum(x))
+
+median(lib.hela.unspliced / lib.hela.spliced)
+
+# spliced v unspliced HEK
+lib.hek.spliced <- apply(assays(se.hek[,colData(se.hek)$readtype=="spliced"])$counts, 2, function(x) sum(x))
+lib.hek.unspliced <- apply(assays(se.hek[,colData(se.hek)$readtype=="unspliced"])$counts, 2, function(x) sum(x))
+
+median(lib.hek.unspliced / lib.hek.spliced)
 ```
 
