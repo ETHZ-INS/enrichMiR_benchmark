@@ -55,6 +55,28 @@ colData(se.splicing) <- cbind(colData(se.splicing), rbind(colData(se.hela), colD
 
 ## DEA
 
+```{r generate control function}
+
+genCTRL <- function(se, readtype, logcpm){
+  # e.ctrl <- sapply(unique(se$Batch), ls=min(colSums(assays(se)[[readtype]])),
+  #                        FUN=function(x,ls){
+  #                          rowMedians(exp(assays(se)[[logcpm]][,se$Batch==x])-1) * ls/1000000
+  #                          }
+  #                        )
+  e.ctrl <- sapply(unique(se$Batch), ls=colSums(assays(se)[[readtype]]),
+                         FUN=function(x,ls){
+                           rowMedians(expm1(assays(se)[[logcpm]][,se$Batch==x])) * median(ls[se$Batch==x])/1000000
+                           }
+                         )
+
+  ### generate colnames
+  n.cols <- sapply( unique(se$Batch), FUN=function(x) var_name <- paste("CTRL", x, sep=".") )
+  colnames(e.ctrl) <- n.cols
+  rownames(e.ctrl) <- rownames(se)
+  return(e.ctrl)
+  }
+```
+
 ```{r exon dea function, message=FALSE, warning=FALSE, eval=TRUE}
 
 
@@ -86,29 +108,8 @@ exonDEA <- function(se, model, model0=~1){
   assays(se)$logcpm.unspliced <- log1p(cpm(calcNormFactors(DGEList(assays(se)$unspliced))))
 
   ## generate a 'control' sample out of the median normalized counts over all samples
-  genCTRL <- function(se, readtype, logcpm){
-    # e.ctrl <- sapply(unique(se$Batch), ls=min(colSums(assays(se)[[readtype]])),
-    #                        FUN=function(x,ls){
-    #                          rowMedians(exp(assays(se)[[logcpm]][,se$Batch==x])-1) * ls/1000000
-    #                          }
-    #                        )
-    e.ctrl <- sapply(unique(se$Batch), ls=colSums(assays(se)[[readtype]]),
-                           FUN=function(x,ls){
-                             rowMedians(expm1(assays(se)[[logcpm]][,se$Batch==x])) * median(ls[se$Batch==x])/1000000
-                             }
-                           )
-
-    ### generate colnames
-    n.cols <- sapply( unique(se$Batch), FUN=function(x)
-      var_name <- paste("CTRL", x, sep=".") )
-    colnames(e.ctrl) <- n.cols
-    rownames(e.ctrl) <- rownames(se)
-    return(e.ctrl)
-  }
-  
   e.ctrl1 <- genCTRL(se, readtype1, "logcpm.spliced")
   e.ctrl2 <- genCTRL(se, readtype2, "logcpm.unspliced")
-  
   
   ## add control samples to assays & generate DGEList object
   dds1 <- DGEList(cbind(e1, e.ctrl1))
@@ -248,6 +249,11 @@ SEtools::sehm(se.hela.test[,order(colData(se.hela.test)$miRNA)], row.names(se.he
 # logFC heatmap HeLa [model = ~readtype*miRNA, model0 = ~readtype]
 SEtools::sehm(se.hela.test2[,order(colData(se.hela.test2)$miRNA)], row.names(se.hela.test2)[rowData(se.hela.test2)$DEA.spliced.all$FDR < 0.00001], gaps_at = "readtype",
               breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+
+
+# logCPM vs logFC scatterplot HeLa
+LSD:::heatscatter(as.vector(assays(se.hela)$logcpm),as.vector(assays(se.hela)$log2FC))
+abline(a=0, b=0)
 ```
 
 ### HEK
@@ -273,6 +279,11 @@ SEtools::sehm(se.hek.test[,order(colData(se.hek.test)$miRNA)], row.names(se.hek.
 # logFC heatmap HEK [model = ~readtype*miRNA, model0 = ~readtype]
 SEtools::sehm(se.hek.test2[,order(colData(se.hek.test2)$miRNA)], row.names(se.hek.test2)[rowData(se.hek.test2)$DEA.spliced.all$FDR < 0.00001], gaps_at = "readtype",
               breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+
+
+# logCPM vs logFC scatterplot HEK
+LSD:::heatscatter(as.vector(assays(se.hek)$logcpm),as.vector(assays(se.hek)$log2FC))
+abline(a=0, b=0)
 ```
 
 ## Stats
@@ -290,5 +301,71 @@ lib.hek.spliced <- apply(assays(se.hek[,colData(se.hek)$readtype=="spliced"])$co
 lib.hek.unspliced <- apply(assays(se.hek[,colData(se.hek)$readtype=="unspliced"])$counts, 2, function(x) sum(x))
 
 median(lib.hek.unspliced / lib.hek.spliced)
+
+
+# check number of positive & negative logFC for different significances HeLa spliced
+signTables <- function(se, sig, dea){
+  fc.sign <- lapply(sig, function(x) table(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC)) )
+  names(fc.sign) <- sig
+  return(fc.sign)
+}
+
+sig <- c(1e-10, 1e-5, .05, .1, 1)
+signTables(se.hela, sig, "DEA.spliced.all")
+signTables(se.hek, sig, "DEA.spliced.all")
 ```
+
+```{r result comparison, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+# compare to non-exon-specific DEA results
+
+## construct non-exon-specific SE object
+### load
+se.comb.hela <- readRDS("data/bartel.hela.DEA.SE.rds")
+rowData(se.comb.hela) <- lapply(rowData(se.comb.hela), FUN=function(x){ if(is.data.frame(x)) x <- DataFrame(x); x} )
+### only select genes common with our exon-specific dataset
+common <- intersect(rowData(se.hela)$gene_name, rowData(se.comb.hela)$symbol)
+se.comb.hela <- se.comb.hela[common,]
+
+### generate control samples
+e.ctrl <- genCTRL(se.comb.hela, "counts", "logcpm")
+
+### add control samples to assays & generate DGEList object
+dds <- DGEList(cbind(assay(se.comb.hela), e.ctrl))
+
+### generate colData
+dd <- colData(se.comb.hela)[,c("Batch","miRNA","Cell_Line")]
+dd.ctrl <- data.frame(Batch=unique(se.comb.hela$Batch), 
+                       miRNA="CTRL", 
+                       Cell_Line=unique(as.character(dd$Cell_Line)) )
+dd <- rbind(dd, dd.ctrl)
+
+### generate SE & logCPM & log2FC assays
+se.comb.hela <- SummarizedExperiment(assays=list(counts=dds$counts), rowData=rowData(se.comb.hela), colData=dd)
+assays(se.comb.hela)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se.comb.hela)))))
+se.comb.hela <- SEtools::log2FC(se.comb.hela, controls = se.comb.hela$miRNA=="CTRL", by = se.comb.hela$Batch, fromAssay = "logcpm")
+
+rowData(se.comb.hela)$DEA.all <- DataFrame(FDR=unlist(
+  bplapply(1:nrow(se.comb.hela), function(i){
+    fdr <- sapply(rowData(se.comb.hela)[-1], function(x){
+      x[[i,"FDR"]]
+      })
+    min(fdr)
+    }, BPPARAM = MulticoreParam(8, progressbar = FALSE) )
+  ), row.names = rownames(se.comb.hela) )
+
+
+
+## logFC heatmap HEK [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+SEtools::sehm(se.comb.hela[,order(colData(se.comb.hela)$miRNA)], row.names(se.comb.hela)[rowData(se.comb.hela)$DEA.all$FDR < 0.01],
+              breaks=T, do.scale = T, show_colnames = FALSE, assayName = "log2FC", anno_columns = "miRNA")
+
+## logCPM vs logFC scatterplot HeLa comb
+LSD:::heatscatter(as.vector(assays(se.comb.hela)$logcpm),as.vector(assays(se.comb.hela)$log2FC))
+abline(a=0, b=0)
+
+## logFC signs at different significance levels 
+signTables(se.comb.hela, sig, "DEA.all")
+```
+
 
