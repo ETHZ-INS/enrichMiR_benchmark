@@ -109,93 +109,133 @@ Batch correction for HEK cells: maybe not necessary. Let's compare both DEAs.
 
 ## DEA
 
-### HeLa
+```{r generate control function}
 
-```{r hela dea bartel, message=FALSE, warning=FALSE}
+#' genCTRL
+#'
+#' @param se SE object
+#' @param logcpm character: name of the logcpm assay contained in supplied SE object
+#'
+#' @return matrix: control samples generated out of existing samples, one for each batch
+#'
+genCTRL <- function(se, logcpm){
+  # e.ctrl <- sapply(unique(se$Batch), ls=min(colSums(assay(se))),
+  #                        FUN=function(x,ls){
+  #                          rowMedians(exp(assays(se)[[logcpm]][,se$Batch==x])-1) * ls/1000000
+  #                          }
+  #                        )
+  e.ctrl <- sapply(unique(se$Batch), ls=colSums(assay(se)),
+                         FUN=function(x,ls){
+                           rowMedians(expm1(assays(se)[[logcpm]][,se$Batch==x])) * median(ls[se$Batch==x])/1000000
+                           }
+                         )
 
-se.hela$miRNA <- droplevels(se.hela$miRNA)
-
-# correct data for batch effect (for visualization)
-assays(se.hela)$corrected <- sva::ComBat(assays(se.hela)$logcpm, batch = se.hela$Batch, 
-                                    model.matrix(~se.hela$miRNA))
-
-# generate a 'control' sample out of the median normalized counts over all samples
-e.ctrl <- sapply(unique(se.hela$Batch), ls=min(colSums(assay(se.hela))), 
-                 FUN=function(x,ls){
-                   rowMedians(exp(assays(se.hela)$logcpm[,se.hela$Batch==x])-1) *
-                     ls/1000000
-                   }
-                 )
-# add control sample to SE colData with
-dd <- rbind(colData(se.hela)[,c("Batch","miRNA")], data.frame(Batch=unique(se.hela$Batch),
-                                                              miRNA="CTRL"))
-dd$miRNA <- relevel(dd$miRNA, "CTRL")
-
-# add 'control' sample counts to SE sample counts
-dds <- DGEList(cbind(assay(se.hela), e.ctrl))
-
-# do DEA taking batch effect into account
-dds <- calcNormFactors(dds)
-mm <- model.matrix(~Batch+miRNA, data=dd)
-dds <- estimateDisp(dds,mm)
-fit <- glmFit(dds,mm)
-## fit linear model dropping one sample at a time (using multiple cores)
-dea.list.hela <- bplapply( levels(dd$miRNA)[-1], BPPARAM=MulticoreParam(8), FUN=function(x){
-  as.data.frame(topTags(glmLRT(fit, paste0("miRNA",x)),Inf))
-})
-names(dea.list.hela) <- levels(dd$miRNA)[-1]
+  ### generate colnames
+  n.cols <- sapply( unique(se$Batch), FUN=function(x) var_name <- paste("CTRL", x, sep=".") )
+  colnames(e.ctrl) <- n.cols
+  rownames(e.ctrl) <- rownames(se)
+  return(e.ctrl)
+  }
 ```
 
 
-### HEK
+```{r dea bartel function, message=FALSE, warning=FALSE}
 
-```{r hek dea bartel, message=FALSE, warning=FALSE}
+#' bartelDEA
+#'
+#' Generates control samples out of the average values over all supplied samples,
+#' calculates their logCPM & log2FC data and performs DEA over all treatments & individual ones. 
+#' All is assembled into one SE object. 
+#' 
+#'
+#' @param se SummarizedExperiment object containing assays of raw counts
+#'
+#' @return an SE object
+#' 
+bartelDEA <- function(se, model, model0=~1){
 
-se.hek$miRNA <- droplevels(se.hek$miRNA)
-se.hek$Batch <- droplevels(se.hek$Batch)
+  se$Batch <- droplevels(se$Batch)
+  
+  # generate control
+    
+  ## create logcpm assay
+  assays(se)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se)))))
+  
+  ## generate a 'control' sample out of the median normalized counts over all samples
+  e.ctrl <- genCTRL(se, "logcpm")
+  
+  ## add control samples to assays & generate DGEList object
+  dds <- DGEList(cbind(assay(se), e.ctrl))
+  
+  ## generate colData info for combined assay
+  dd <- rbind(colData(se)[,c("Batch","miRNA","Cell_Line")], data.frame(Batch=unique(se$Batch),
+                                                                       Cell_Line=unique(se$Cell_Line),
+                                                                       miRNA="CTRL"))
+  dd$miRNA <- relevel(droplevels(dd$miRNA), ref="CTRL")
+  
+  
+  # DEA
+  
+  ## normalization
+  dds <- calcNormFactors(dds)
+  ## models
+  mm <- model.matrix(model, data=dd)
+  mm0 <- model.matrix(model0, data=dd)
+  testCoeff <- setdiff(colnames(mm), colnames(mm0))
+  ## estimate dispersion
+  dds <- estimateDisp(dds,mm)
+  ## fit negative binomial distribution on counts per gene (use glmFit for few replicates)
+  fit <- glmFit(dds,mm)
+  
+  ## fit linear model on all samples
+  res <- as.data.frame(topTags(glmLRT(fit, testCoeff),Inf))
+  
+  ## fit linear model dropping one sample at a time (using multiple cores)
+  res.list <- bplapply( testCoeff, BPPARAM=MulticoreParam(8), FUN=function(x){
+    as.data.frame(topTags(glmLRT(fit, x), Inf))
+  })
+  
+  dea.names <- make.names(gsub("miRNA","", testCoeff))
+  names(res.list) <- paste0("DEA.",dea.names)
+  colnames(res)[grepl("logFC",colnames(res))] <- paste0("logFC.", dea.names)
+  
+  
+  # generate final SE object
+  
+  ## SE object with logCPM & logFC assays & batch-corrected logCPM assays (for visualization)
+  se <- SummarizedExperiment(assays=list(counts=dds$counts), 
+                             rowData=rowData(se), 
+                             colData=dd) 
+  assays(se)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se)))))
+  se <- SEtools::log2FC(se, controls = se$miRNA=="CTRL", by = paste(se$Batch), fromAssay = "logcpm")
+  assays(se)$corrected <- sva::ComBat(assays(se)$logcpm, batch = se$Batch, 
+                                      model.matrix(~se$miRNA))
 
-# correct data for batch effect (for visualization)
-assays(se.hek)$corrected <- sva::ComBat(assays(se.hek)$logcpm, batch = se.hek$Batch, 
-                                   model.matrix(~se.hek$miRNA))
-
-# generate a 'control' sample out of the median normalized counts over all samples
-e.ctrl2 <- sapply(unique(se.hek$Batch), ls=min(colSums(assay(se.hek))), FUN=function(x,ls){
-  rowMedians(exp(assays(se.hek)$logcpm[,se.hek$Batch==x])-1)*ls/1000000
-})
-# add control sample to SE colData with
-dd2 <- rbind(colData(se.hek)[,c("Batch","miRNA")], data.frame(Batch=unique(se.hek$Batch), 
-                                                              miRNA="CTRL"))
-dd2$miRNA <- relevel(dd2$miRNA, "CTRL")
-
-# add 'control' sample counts to SE sample counts
-dds2 <- DGEList(cbind(assay(se.hek), e.ctrl2))
-
-# do DEA taking batch effect into account
-dds2 <- calcNormFactors(dds2)
-mm2 <- model.matrix(~Batch+miRNA, data=dd2)
-dds2 <- estimateDisp(dds2,mm2)
-fit2 <- glmFit(dds2,mm2)
-## fit linear model dropping one sample at a time (using multiple cores)
-dea.list.hek <- bplapply( levels(dd2$miRNA)[-1], BPPARAM=MulticoreParam(8), FUN=function(x){
-  as.data.frame(topTags(glmLRT(fit2, paste0("miRNA",x)),Inf))
-})
-names(dea.list.hek) <- levels(dd2$miRNA)[-1]
+  ## add DEAs
+  rowData(se)$DEA.all <- DataFrame(res[rownames(se),])
+  for(i in paste0("DEA.",dea.names)){
+    rowData(se)[[i]] <- DataFrame(res.list[[i]][rownames(se),])
+  }
+  
+  
+  # output
+  
+  return(se)
+}
 ```
 
+```{r dea bartel, message=FALSE, warning=FALSE}
 
-### HEK no batch correction
+# DEA HeLa
+se.hela <- bartelDEA(se.hela, model = ~Batch+miRNA, model0 = ~Batch)
 
-```{r hek no batch dea bartel, message=FALSE, warning=FALSE}
+# DEA HEK
+se.hek <- bartelDEA(se.hek, model = ~Batch+miRNA, model0 = ~Batch)
 
-# do DEA not taking batch effect into account
-mm3 <- model.matrix(~1+miRNA, data=dd2)
-dds3 <- estimateDisp(dds2,mm3)
-fit3 <- glmFit(dds3,mm3)
-## fit linear model dropping one sample at a time (using multiple cores)
-dea.list.hek_nb <- bplapply( levels(dd2$miRNA)[-1], BPPARAM=MulticoreParam(8), FUN=function(x){
-  as.data.frame(topTags(glmLRT(fit3, paste0("miRNA",x)),Inf))
-})
-names(dea.list.hek_nb) <- levels(dd2$miRNA)[-1]
+# DEA HEK without taking batch effect into account
+se.hek.nb <- se[,se$Cell_Line!="HeLa"]
+se.hek.nb <- se.hek.nb[rowSums(assay(se.hek.nb) >= sel[1]) >= sel[2],]
+se.hek.nb <- bartelDEA(se.hek.nb, model = ~1+miRNA)
 ```
 
 
@@ -204,16 +244,17 @@ names(dea.list.hek_nb) <- levels(dd2$miRNA)[-1]
 ```{r sig tx changes bartel, message=FALSE, warning=FALSE}
 
 # select significant gene expression changes
-degs.hela <- lapply(dea.list.hela, FUN=function(x) row.names(x)[x$FDR<0.05])
-degs.hek <- lapply(dea.list.hek, FUN=function(x) row.names(x)[x$FDR<0.05])
-degs.hek_nb <- lapply(dea.list.hek_nb, FUN=function(x) row.names(x)[x$FDR<0.05])
+degs.hela <- lapply(rowData(se.hela)[grepl("DEA.",colnames(rowData(se.hela)))], FUN=function(x) row.names(x)[x$FDR<0.05])
+degs.hek <- lapply(rowData(se.hek)[grepl("DEA.",colnames(rowData(se.hek)))], FUN=function(x) row.names(x)[x$FDR<0.05])
+degs.hek.nb <- lapply(rowData(se.hek.nb)[grepl("DEA.",colnames(rowData(se.hek.nb)))], FUN=function(x) row.names(x)[x$FDR<0.05])
+
 # number of significant gene expression changes per sample
 ## HeLa
 sapply(degs.hela,length)
 ## HEK
 sapply(degs.hek,length)
 ## HEK no batch correction
-sapply(degs.hek_nb,length)
+sapply(degs.hek.nb,length)
 ```
 
 ```{r hek comparison bartel, message=FALSE, warning=FALSE}
@@ -222,37 +263,18 @@ sapply(degs.hek_nb,length)
 ## median number of significant changes: HEK w batch
 median(unlist(lapply(degs.hek,length)))
 ## median number of significant changes: HEk w/out batch
-median(unlist(lapply(degs.hek_nb,length)))
+median(unlist(lapply(degs.hek.nb,length)))
 ## which proportion of significant tx do we see in batch vs no batch and vice versa
-## e.g. for miR-122 65% of tx found in batch corrected DEA are also found in uncorrected 
-t(sapply(levels(se.hek$miRNA), FUN = function(x){
-  b_in_nb <- sum(degs.hek[[x]] %in% degs.hek_nb[[x]])/length(degs.hek[[x]])
-  nb_in_b <- sum(degs.hek_nb[[x]] %in% degs.hek[[x]])/length(degs.hek_nb[[x]])
+## e.g. for miR-122 63% of tx found in batch corrected DEA are also found in uncorrected 
+dea.names <- colnames(rowData(se.hek)[grepl("DEA.",colnames(rowData(se.hek)))])
+t(sapply(dea.names, FUN = function(x){
+  b_in_nb <- sum(degs.hek[[x]] %in% degs.hek.nb[[x]])/length(degs.hek[[x]])
+  nb_in_b <- sum(degs.hek.nb[[x]] %in% degs.hek[[x]])/length(degs.hek.nb[[x]])
   c(b_in_nb=b_in_nb, nb_in_b=nb_in_b)
 }))
-
 ```
 
 We get more significant results with the batch corrected HEK DEA & almost all significant tx of the batch uncorrected HEK DEA are present in the corrected one. We thus choose the batch corrected version.  
-
-
-## generate SE
-
-```{r add deas to se}
-
-# add DEAs to SE
-
-## HeLa
-for(i in 1:length(dea.list.hela)){
-  dea.name <- paste0("DEA.", names(dea.list.hela)[i])
-  rowData(se.hela)[[dea.name]] <- as.data.frame(dea.list.hela[[i]])
-}
-## HEK
-for(i in 1:length(dea.list.hek)){
-  dea.name <- paste0("DEA.", names(dea.list.hek)[i])
-  rowData(se.hek)[[dea.name]] <- as.data.frame(dea.list.hek[[i]])
-}
-```
 
 
 ## Export
@@ -299,22 +321,22 @@ se.hek <- readRDS(output.no_round2)
 # heatmaps: comparing batch uncorrected vs corrected
 
 ## HeLa logcpm
-sehm(se.hela[,order(se.hela$miRNA)], degs.hela$`miR-143`, do.scale = TRUE, 
+sehm(se.hela[,order(se.hela$miRNA)], degs.hela$DEA.miR.143, do.scale = TRUE, 
      anno_columns = c("miRNA","Batch"), assayName = "logcpm", 
      show_rownames = FALSE, breaks = TRUE)
 
 ## HeLa logcpm batch corrected
-sehm(se.hela[,order(se.hela$miRNA)], degs.hela$`miR-143`, do.scale = TRUE, 
+sehm(se.hela[,order(se.hela$miRNA)], degs.hela$DEA.miR.143, do.scale = TRUE, 
      anno_columns = c("miRNA","Batch"), assayName = "corrected", 
      show_rownames = FALSE, breaks = TRUE)
 
 ## HEK logcpm
-sehm(se.hek[,order(se.hek$miRNA)], degs.hek$`miR-184`, do.scale = TRUE, 
+sehm(se.hek[,order(se.hek$miRNA)], degs.hek$DEA.miR.184, do.scale = TRUE, 
      anno_columns = c("miRNA","Batch"), assayName = "logcpm", 
      show_rownames = FALSE, breaks = TRUE)
 
 ## HEK logcpm batch corrected
-sehm(se.hek[,order(se.hek$miRNA)], degs.hek$`miR-184`, do.scale = TRUE, 
+sehm(se.hek[,order(se.hek$miRNA)], degs.hek$DEA.miR.184, do.scale = TRUE, 
      anno_columns = c("miRNA","Batch"), assayName = "corrected", 
      show_rownames = FALSE, breaks = TRUE)
 ```
