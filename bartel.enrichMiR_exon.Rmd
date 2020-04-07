@@ -375,6 +375,8 @@ signTables(se.comb.hela, sig, "DEA.all")
 
 ## Investigate upregulated spliced tx
 
+### Analysis
+
 ```{r load enrichmir ts}
 
 # load TS object
@@ -407,35 +409,91 @@ pert <- lapply(pert, function(x){
 # Check if log2FC upregulations are due to skewed controls 
 
 
-ctrlAnalysis <- function(se, pert, TS){
+ctrlAnalysis <- function(se, pert, TS, fc.degree){
   
   ## vector of Bartel miRNA treatments and their corresponding seeds (based on actual miRNA seqs)
-  pert.fam <- sapply(se$miRNA[se$miRNA!="CTRL"], function(x){
+  pert.seed <- sapply(se$miRNA[se$miRNA!="CTRL" & se$readtype=="spliced"], function(x){
     as.character(pert$seed[grepl(paste0(x,"$"), pert$treatment) | grepl(paste0(x,"\\("), pert$treatment)])
     })
-  names(pert.fam) <- se$miRNA[se$miRNA!="CTRL"]
+  names(pert.seed) <- se$miRNA[se$miRNA!="CTRL" & se$readtype=="spliced"]
   
   ## adjusted gene names to be identical to TS names
   fc.genes <- sapply(rownames(se), function(x) paste(unlist(strsplit(x,"\\."))[-1], collapse ="."))
   ## only consider common genes
   id <- fc.genes %in% TS$feature
+  ## significant ids
+  id.sig <- id & rowData(se)$DEA.spliced.all$FDR < .05
   
-  ## find treatment miRNAs potentially targeting each gene
-  n <- apply(sign(assays(se[id,se$miRNA!="CTRL"])$log2FC),1, function(x){
-    if(max(x)>0){
-      unique(pert.fam[x!=1])
-    }
-    })
-  names(n) <- fc.genes[id]
+  ## aggregate logFC by genes
+  logfc <- cbind(as.data.frame(assays(se)$log2FC),fc.genes)
+  logfc <- aggregate(logfc[,colnames(logfc)!="fc.genes"], by=list(logfc$fc.genes), FUN="sum")
+  rownames(logfc) <- logfc$Group.1
+  logfc.sign <- logfc.sign.deg <- sign(logfc[,colnames(logfc)!="Group.1"])
+  
+  ## update gene names, DEA and IDs: aggregate by genes
+  
+  ### adjusted gene names to be identical to TS names
+  fc.genes <- rownames(logfc)
+  ### only consider common genes
+  id <- fc.genes %in% TS$feature
+  ### aggregate DEA FDR info
+  fdr <- data.frame(
+    FDR=unlist(bplapply(fc.genes[id], function(i){
+      if(table(as.character(rowData(se)$gene_name))[i] > 1){
+        min(rowData(se)$DEA.spliced.all$FDR[rowData(se)$gene_name==i])
+      } else {
+        rowData(se)$DEA.spliced.all$FDR[rowData(se)$gene_name==i]
+      }
+      }, BPPARAM = MulticoreParam(8, progressbar = FALSE) ))
+    )
+  rownames(fdr) <- fc.genes[id]
+  ### significant ids
+  id.sig <- fc.genes %in% rownames(fdr)[fdr$FDR<.05]
+  
+  ## for splicing: only genes common with TS & with logfc createer than 'fc.degree' & significant FDR
+  logfc.sign.deg[logfc[,colnames(logfc)!="Group.1"] < fc.degree] <- 0
+  logfc.sign.deg <- logfc.sign.deg[rownames(logfc.sign.deg) %in% fc.genes[id.sig] & rowSums(logfc.sign.deg)>0, se$miRNA!="CTRL"]
+  ## for control: only genes common with TS
+  logfc.sign <- logfc.sign[rownames(logfc.sign) %in% fc.genes[id], se$miRNA!="CTRL"]
+             
+  
+  ## to find treatment miRNA for each gene for which the logFC are upregulated
+  nonUpregSeeds <- function(readtype, logfc, pert.seed){
+    l <- lapply(readtype, function(i){
+      apply(logfc[,readtype==i], 1, function(x){
+        pert.seed[x!=1]
+        })
+      })
+    return(l)
+  }
+  
+  ## splicing: find treatment miRNAs potentially targeting each gene
+  n <- nonUpregSeeds(unique(se$readtype), logfc.sign.deg, pert.seed)
+  names(n) <- unique(se$readtype)
+  ## control: background distribution of upregulation instances for each gene
+  m <- nonUpregSeeds(unique(se$readtype), logfc.sign, pert.seed)
+  names(m) <- paste0("ctrl.",unique(se$readtype))
+  ## combine
+  n <- c(n,m)
+  
   
   ## for each common gene select the miRNA families that target them (using TargetScan data)
-  ts.list <- lapply(names(n[id]), function(x)
+  ts.all <- lapply(fc.genes[id], function(x){
     TS$family[TS$feature==x]
-    )
-  names(ts.list) <- names(n[names(n) %in% TS$feature])
+    })
+  names(ts.all) <- fc.genes[id]
+  ts.list <- list(splicing=ts.all[fc.genes[id.sig]], ctrl=ts.all[fc.genes[id]])
   
   ## ratio of treatment miRNA are in the TS target list
-  ratios <- sapply(names(ts.list), function(x) sum(n[[x]] %in% ts.list[[x]])/length(n[[x]]) )
+  ratios <- lapply(n, function(x){
+    if( length(x)==nrow(logfc.sign) ){
+      sapply( names(x), function(y) sum(x[[y]] %in% ts.list$ctrl[[y]])/length(x[[y]]) )
+    } else {
+      sapply( names(x), function(y) sum(x[[y]] %in% ts.list$splicing[[y]])/length(x[[y]]) )
+    }
+  })
+  
+  # output
   
   return(list(n=n,ratios=ratios))
 }
@@ -446,32 +504,95 @@ ctrlAnalysis <- function(se, pert, TS){
 # Check if log2FC upregulations are due to skewed controls 
 
 ## call function
-ca.hela <- ctrlAnalysis(se.hela, pert$hela, TS)
-ca.hek <- ctrlAnalysis(se.hek, pert$hek, TS)
+ca.hela <- ctrlAnalysis(se.hela, pert$hela, TS, .5)
+ca.hek <- ctrlAnalysis(se.hek, pert$hek, TS, .5)
+```
 
+```{r control analysis df function}
 
-## HeLa
+# function to generate dataframes for plotting
 
-### to be able to affect the controls, the combined targeting of the treatment miRNAs must be in the majority
-hist(sapply(ca.hela$n, length))
-abline(v=length(unique(se.hela$miRNA))/2, col="red")
+dfGen <- function(ca){
+  df <- data.frame(
+  counts=unlist(lapply(ca$n, function(x) sapply(x, length))),
+  ratios=unlist(lapply(ca$ratios, function(x) x)),
+  id=unlist(lapply(names(ca$n), function(x) rep(x, length(ca$n[[x]])))),
+  readtype=c(rep("spliced",length(ca$n$spliced)),
+             rep("unspliced",length(ca$n$unspliced)),
+             rep("spliced",length(ca$n$ctrl.spliced)),
+             rep("unspliced",length(ca$n$ctrl.unspliced)) )
+  )
+  return(df)
+}
+```
 
-### check what ratio of treatment miRNA are in the TS target list
-hist(ca.hela$ratios)
-mean(ca.hela$ratios, na.rm=TRUE)
-median(ca.hela$ratios, na.rm=TRUE)
+```{r control analysis df}
 
+# generate dataframes for plotting
+df <- lapply(list(ca.hela,ca.hek), function(ca) dfGen(ca))
+names(df) <- c("hela","hek")
+```
 
-## HEK
+### plots HeLa
 
-### to be able to affect the controls, the combined targeting of the treatment miRNAs must be in the majority
-hist(sapply(ca.hek$n, length))
-abline(v=length(unique(se.hek$miRNA))/2, col="red")
+```{r control plots hela}
 
-### check what ratio of treatment miRNA are in the TS target list
-hist(ca.hek$ratios)
-mean(ca.hek$ratios, na.rm=TRUE)
-median(ca.hek$ratios, na.rm=TRUE)
+# plots HeLa
+
+## to be able to affect the controls, the combined targeting of the treatment miRNAs must be in the majority
+ggplot(df$hela, aes(counts)) + geom_density(aes(fill=id), alpha=0.9, na.rm=TRUE)  + facet_wrap(~readtype) + 
+  geom_vline(aes(xintercept = ncol(se.hela[,se.hela$miRNA!="CTRL" & se.hela$readtype=="spliced"])/2), color="red")
+
+ggplot(df$hela, aes(x=readtype,y=counts,fill=id)) + geom_boxplot()
+
+n.means <- sapply(unique(df$hela$id), function(x) mean(df$hela$counts[df$hela$id==x]))
+names(n.means) <- unique(df$hela$id)
+n.means
+
+n.medians <- sapply(unique(df$hela$id), function(x) median(df$hela$counts[df$hela$id==x]))
+names(n.medians) <- unique(df$hela$id)
+n.medians
+
+## check what ratio of treatment miRNA are in the TS target list (logit)
+ggplot(df$hela, aes(log1p(ratios/(1 - ratios)))) + geom_density(aes(fill=id), alpha=0.5, na.rm=TRUE)  + facet_wrap(~readtype)
+## check what ratio of treatment miRNA are in the TS target list
+ggplot(df$hela, aes(ratios)) + geom_density(aes(fill=id), alpha=0.6, na.rm=TRUE)  + facet_wrap(~readtype)
+
+ggplot(df$hela, aes(x=readtype,y=ratios,fill=id)) + geom_boxplot()
+
+sapply(ca.hela$ratios, mean, na.rm=TRUE)
+sapply(ca.hela$ratios, median, na.rm=TRUE)
+```
+
+### plots HEK
+
+```{r control plots hek}
+
+# plots HEK
+
+## to be able to affect the controls, the combined targeting of the treatment miRNAs must be in the majority
+ggplot(df$hek, aes(counts)) + geom_density(aes(fill=id), alpha=0.9, na.rm=TRUE)  + facet_wrap(~readtype) + 
+  geom_vline(aes(xintercept = ncol(se.hek[,se.hek$miRNA!="CTRL" & se.hek$readtype=="spliced"])/2), color="red")
+
+ggplot(df$hek, aes(x=readtype,y=counts,fill=id)) + geom_boxplot()
+
+n.means <- sapply(unique(df$hek$id), function(x) mean(df$hek$counts[df$hek$id==x]))
+names(n.means) <- unique(df$hek$id)
+n.means
+
+n.medians <- sapply(unique(df$hek$id), function(x) median(df$hek$counts[df$hek$id==x]))
+names(n.medians) <- unique(df$hek$id)
+n.medians
+
+## check what ratio of treatment miRNA are in the TS target list (logit)
+ggplot(df$hek, aes(log1p(ratios/(1 - ratios)))) + geom_density(aes(fill=id), alpha=0.5, na.rm=TRUE)  + facet_wrap(~readtype)
+## check what ratio of treatment miRNA are in the TS target list
+ggplot(df$hek, aes(ratios)) + geom_density(aes(fill=id), alpha=0.6, na.rm=TRUE)  + facet_wrap(~readtype)
+
+ggplot(df$hek, aes(x=readtype,y=ratios,fill=id)) + geom_boxplot()
+
+sapply(ca.hela$ratios, mean, na.rm=TRUE)
+sapply(ca.hela$ratios, median, na.rm=TRUE)
 ```
 
 
