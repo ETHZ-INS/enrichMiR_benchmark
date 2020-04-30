@@ -32,7 +32,7 @@ suppressPackageStartupMessages({
 
 ## Allocation
 
-```{r allocation}
+```{r allocation, warning=FALSE, message=FALSE, eval=TRUE}
 
 # allocation
 
@@ -42,21 +42,19 @@ sel <- c(10, 2)
 input <- "data/raw/bartel_symbols.raw.SE.rds"
 ## output files
 output1 <- "data/bartel.hela.DEA.SE.rds"
-output.no_round1 <- "data/bartel_noRound.hela.DEA.SE.rds"
 output2 <- "data/bartel.hek.DEA.SE.rds"
-output.no_round2 <- "data/bartel_noRound.hek.DEA.SE.rds"
 ```
 
 
 ## Loading
 
-```{r load se, warning=FALSE, message=FALSE}
+```{r load se, warning=FALSE, message=FALSE, eval=TRUE}
 
 # load raw SE file
 se <- readRDS(input)
 ```
 
-```{r separate celltypes bartel, warning=FALSE, message=FALSE}
+```{r separate celltypes bartel, warning=FALSE, message=FALSE, eval=TRUE}
 
 # get logcpm values & factorize Batch info
 assays(se)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se)))))
@@ -74,7 +72,7 @@ se.hek <- se.hek[rowSums(assay(se.hek) >= sel[1]) >= sel[2],]
 
 Question: should we correct for batch?
 
-```{r pca bartel, warning=FALSE, message=FALSE}
+```{r pca bartel, warning=FALSE, message=FALSE, eval=TRUE}
 
 # plot PCA
 
@@ -109,7 +107,7 @@ Batch correction for HEK cells: maybe not necessary. Let's compare both DEAs.
 
 ## DEA
 
-```{r generate control function}
+```{r generate control function, message=FALSE, warning=FALSE, eval=TRUE}
 
 #' genCTRL
 #'
@@ -139,7 +137,7 @@ genCTRL <- function(se, logcpm){
 ```
 
 
-```{r dea bartel function, message=FALSE, warning=FALSE}
+```{r dea bartel function, message=FALSE, warning=FALSE, eval=TRUE}
 
 #' bartelDEA
 #'
@@ -207,10 +205,9 @@ bartelDEA <- function(se, model, model0=~1){
                              rowData=rowData(se), 
                              colData=dd) 
   assays(se)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se)))))
-  se <- SEtools::log2FC(se, controls = se$miRNA=="CTRL", by = paste(se$Batch), fromAssay = "logcpm")
-  assays(se)$corrected <- sva::ComBat(assays(se)$logcpm, batch = se$Batch, 
-                                      model.matrix(~se$miRNA))
-
+  se <- plgINS::svacor(se, form = model, form0 = model0)
+  se <- SEtools::log2FC(se, controls = se$miRNA=="CTRL", by = se$readtype, fromAssay = "corrected", isLog = TRUE)
+  
   ## add DEAs
   rowData(se)$DEA.all <- DataFrame(res[rownames(se),])
   for(i in paste0("DEA.",dea.names)){
@@ -224,7 +221,7 @@ bartelDEA <- function(se, model, model0=~1){
 }
 ```
 
-```{r dea bartel, message=FALSE, warning=FALSE}
+```{r dea bartel, message=FALSE, warning=FALSE, eval=TRUE}
 
 # DEA HeLa
 se.hela <- bartelDEA(se.hela, model = ~Batch+miRNA, model0 = ~Batch)
@@ -241,7 +238,7 @@ se.hek.nb <- bartelDEA(se.hek.nb, model = ~1+miRNA)
 
 ## check results
 
-```{r sig tx changes bartel, message=FALSE, warning=FALSE}
+```{r sig tx changes bartel, message=FALSE, warning=FALSE, eval=TRUE}
 
 # select significant gene expression changes
 degs.hela <- lapply(rowData(se.hela)[grepl("DEA.",colnames(rowData(se.hela)))], FUN=function(x) row.names(x)[x$FDR<0.05])
@@ -257,7 +254,7 @@ sapply(degs.hek,length)
 sapply(degs.hek.nb,length)
 ```
 
-```{r hek comparison bartel, message=FALSE, warning=FALSE}
+```{r hek comparison bartel, message=FALSE, warning=FALSE, eval=TRUE}
 
 # comparison of HEK DEA with and without batch effect taken into account
 ## median number of significant changes: HEK w batch
@@ -277,12 +274,23 @@ t(sapply(dea.names, FUN = function(x){
 We get more significant results with the batch corrected HEK DEA & almost all significant tx of the batch uncorrected HEK DEA are present in the corrected one. We thus choose the batch corrected version.  
 
 
+## Remove skewing genes (see: bartel.exon_datagen.DEA.SE.Rmd)
+
+```{r exclude skewing genes, warning=FALSE, message=FALSE, eval=TRUE}
+
+# load genes to be excluded
+skewed.hela <- readRDS("data/bartel.hela.excludedGenes.rds")
+skewed.hek <- readRDS("data/bartel.hek.excludedGenes.rds")
+
+# remove genes not present in spliced/unspliced bartel DEA
+se.hela <- se.hela[!(rownames(se.hela) %in% skewed.hela),]
+se.hek <- se.hek[!(rownames(se.hek) %in% skewed.hek),]
+```
+
 ## Export
 
-```{r export hela bartel, warning=FALSE, message=FALSE}
+```{r export hela batch bartel, warning=FALSE, message=FALSE, eval=TRUE}
 
-# export HeLa noRound
-saveRDS(se.hela, output.no_round1)
 # round
 source("functions/roundSE.R")
 se.hela <- roundSE(se.hela)
@@ -290,16 +298,14 @@ se.hela <- roundSE(se.hela)
 saveRDS(se.hela, output1)
 ```
 
-```{r import hela bartel, warning=FALSE, message=FALSE}
+```{r import hela batch bartel, warning=FALSE, message=FALSE, eval=TRUE}
 
 # import HeLa
-se.hela <- readRDS(output.no_round1)
+se.hela <- readRDS(output1)
 ```
 
-```{r export hek no batch bartel, warning=FALSE, message=FALSE}
+```{r export hek batch bartel, warning=FALSE, message=FALSE, eval=TRUE}
 
-# export HEK noRound
-saveRDS(se.hek, output.no_round2)
 # round
 source("functions/roundSE.R")
 se.hek <- roundSE(se.hek)
@@ -307,16 +313,16 @@ se.hek <- roundSE(se.hek)
 saveRDS(se.hek, output2)
 ```
 
-```{r import hek no batch bartel, warning=FALSE, message=FALSE}
+```{r import hek batch bartel, warning=FALSE, message=FALSE, eval=TRUE}
 
 # import HEK
-se.hek <- readRDS(output.no_round2)
+se.hek <- readRDS(output2)
 ```
 
 
 ## Heatmaps
 
-```{r hm bartel}
+```{r hm bartel, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
 
 # heatmaps: comparing batch uncorrected vs corrected
 

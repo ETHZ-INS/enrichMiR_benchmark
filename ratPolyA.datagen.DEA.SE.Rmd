@@ -1,0 +1,215 @@
+---
+title: "ratPolyA DEA SE generation"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: 'cerulean'
+    highlight: 'tango'
+    df_print: paged
+---
+  
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(SummarizedExperiment)
+  library(SEtools)
+  library(ggplot2)
+  library(plgINS)
+  library(edgeR)
+})
+```
+
+## Loading
+
+```{r import, message=FALSE, warning=FALSE, eval=TRUE}
+
+# load splice SE
+se <- readRDS("data/raw/ratPolyA.raw.SE.rds")
+```
+
+## Prep
+
+```{r modify, message=FALSE, warning=FALSE, eval=TRUE}
+
+# modify colData
+se$rep <- factor(1:4)
+se$isBatch4 <- factor(grepl("_n4",colnames(se)))
+se$miRNA <- factor(sapply(colnames(se), function(x) unlist(strsplit(x,"\\_"))[1]))
+
+# filter raw data
+filter <- c(10,2)
+se <- se[which(rowSums(assay(se) >= filter[1]) >= filter[2]),]
+```
+
+```{r add logcpm, message=FALSE, warning=FALSE, eval=TRUE}
+
+# add logCPM assay
+assays(se)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se)))))
+```
+
+## PCA
+
+```{r pca, message=FALSE, warning=FALSE, eval=TRUE}
+
+# plot PCA to check for batch effect
+
+## combined
+plgINS::plPCA(assays(se)$logcpm, as.data.frame(colData(se)), colorBy = "rep",
+              add.labels = FALSE, annotation_columns = colnames(colData(se))[5])
+```
+
+## DEA
+
+```{r dea variables, message=FALSE, warning=FALSE, eval=TRUE}
+
+# define variables for individual DEAs
+ctrl <- "Neg"
+mirna <- unique(as.character(se$miRNA[se$miRNA!=ctrl]))
+dea.names <- paste0(unique(se$miRNA[se$miRNA!=ctrl]),"vNeg")
+# select reference factors
+se$miRNA <- relevel(droplevels(se$miRNA), ref=ctrl)
+```
+
+```{r dea combined, message=FALSE, warning=FALSE, eval=TRUE}
+
+source("functions/dea.R")
+
+# DEA over all treatments
+se <- DEA(se, name="all", model = ~isBatch4+miRNA, model0 = ~isBatch4)
+```
+
+```{r dea individual, message=FALSE, warning=FALSE, eval=TRUE}
+
+source("functions/dea.R")
+
+# DEAs of individual treatments
+for(i in 1:length(mirna)){
+  se <- DEA(se, use=se$miRNA %in% c(ctrl,mirna[i]), name=dea.names[i], model = ~isBatch4+miRNA, model0 = ~isBatch4)
+}
+```
+
+```{r add logfc, message=FALSE, warning=FALSE, results='hide', eval=TRUE}
+
+## add logFC assay
+se <- plgINS::svacor(se, form = ~isBatch4+miRNA, form0 = ~isBatch4)
+se <- SEtools::log2FC(se, controls = se$miRNA==ctrl, by = se$readtype, fromAssay = "corrected", isLog = TRUE)
+```
+
+## Heatmap
+
+```{r heatmap function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# heatmap function
+
+makeHM <- function(se, sig, nr=20, logcpm=FALSE){
+  for(i in sig){
+    if(sum(rowData(se)$DEA.all$FDR < i) > nr){
+      cat("FDR <", i, "\n")
+      # logFC heatmap
+      SEtools::sehm(se[,order(colData(se)$miRNA)], row.names(se)[rowData(se)$DEA.all$FDR < i], gaps_at = "readtype",
+                breaks=TRUE, do.scale = FALSE, show_colnames = FALSE, assayName = "log2FC", anno_columns = "miRNA")
+      # logcpm heatmap
+      if(logcpm){
+        SEtools::sehm(se[,order(colData(se)$miRNA)], row.names(se)[rowData(se)$DEA.all$FDR < i], gaps_at = "readtype",
+                breaks=TRUE, do.scale = TRUE, show_colnames = FALSE, assayName = "logcpm", anno_columns = "miRNA")
+      }
+      break
+    }
+  }
+}
+```
+
+```{r heatmap, message=FALSE, warning=FALSE, eval=TRUE}
+
+# allocation
+sig.lvl <- c(1e-5,1e-3,.05,.1,.5,.8)
+
+# heatmap of DEA.all
+makeHM(se, sig.lvl, logcpm = TRUE)
+```
+
+## Export
+
+```{r dea export, warning=FALSE, message=FALSE, eval=TRUE}
+
+# round
+source("functions/roundSE.R")
+se <- roundSE(se)
+# export
+saveRDS(se, "data/ratPolyA.DEA.SE.rds")
+```
+
+```{r dea import, warning=FALSE, message=FALSE, eval=FALSE}
+
+# import
+se <- readRDS("data/ratPolyA.DEA.SE.rds")
+```
+
+## Stats
+
+```{r dea stats, message=FALSE, warning=FALSE, eval=TRUE}
+
+# number of significant transcripts
+sapply(rowData(se)[,grepl("DEA",colnames(rowData(se)))], function(x) sum(x$FDR < .05) )
+```
+
+### up-/downregulations at different significance levels
+
+```{r significance signs function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# check number of positive & negative logFC for different significances
+
+sigsDF <- function(se, sig, dea, thr){
+  data.frame(sigLevel=rep(sig,3),
+             counts=c(sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == -1 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr)),
+                      sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == 0 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr)),
+                      sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == 1 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr))
+                      ),
+             sign=c(rep("-1",length(sig)),
+                    rep("0",length(sig)),
+                    rep("1",length(sig))
+                    ),
+             dea=rep(dea,length(sig)*3)
+             )
+}
+```
+
+```{r significance signs, message=FALSE, warning=FALSE, eval=TRUE}
+
+# for each model & DEA: find number of down- & upregulations at different significance levels
+
+## significance levels of interest
+sig <- c(1e-10, 1e-5, .05, .1, .5, .8)
+## only absolute log2FC greater than this will be considered
+fc.thr <- .5
+
+## create dataframes with count informations
+### [model = ~isBatch4+miRNA, model0 = ~isBatch4]
+sigs <- lapply(grep("DEA",colnames(rowData(se)),value=TRUE), function(x){
+  sigsDF(se, sig, x, fc.thr)
+})
+sigs <- data.frame(do.call("rbind",sigs))
+```
+
+```{r significance signs plot, message=FALSE, warning=FALSE, fig.width=12, eval=TRUE}
+
+### [model = ~isBatch4+miRNA, model0 = ~isBatch4]
+ggplot(sigs, aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea)
+```
+
+

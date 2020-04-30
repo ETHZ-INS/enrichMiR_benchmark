@@ -1,0 +1,254 @@
+---
+title: "Whipple DEA SE generation"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: 'cerulean'
+    highlight: 'tango'
+    df_print: paged
+---
+  
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(SummarizedExperiment)
+  library(SEtools)
+  library(ggplot2)
+  library(plgINS)
+  library(edgeR)
+})
+```
+
+## Loading
+
+```{r import, message=FALSE, warning=FALSE, eval=TRUE}
+
+# load splice SE
+se <- readRDS("data/raw/whipple.raw.SE.rds")
+```
+
+## Prep
+
+```{r modify, message=FALSE, warning=FALSE, eval=TRUE}
+
+# modify colData
+se$cell <- factor(c(rep("ESC",6),rep("iN",5)))
+se$miRNA <- factor(c(rep("ctrl",3),rep("miR-379/410",3),rep("ctrl",3),rep("miR-379/410",2)))
+se$rep <- factor(c(rep(LETTERS[1:3],3), "B","C"))
+se$isRepA <- factor(se$rep=="A")
+
+# separate by celltype
+se.esc <- se[,se$cell=="ESC"]
+se.in <- se[,se$cell=="iN"]
+
+# filter dataset
+filter <- c(10,2)
+se.esc <- se.esc[which(rowSums(assay(se.esc) >= filter[1]) >= filter[2]),]
+se.in <- se.in[which(rowSums(assay(se.in) >= filter[1]) >= filter[2]),]
+```
+
+```{r add logcpm, message=FALSE, warning=FALSE, eval=TRUE}
+
+# add logCPM assay
+assays(se)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se)))))
+assays(se.esc)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se.esc)))))
+assays(se.in)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se.in)))))
+```
+
+## PCA
+
+### unseparated
+
+```{r pca unsep, message=FALSE, warning=FALSE, eval=TRUE}
+
+# plot PCA to check for batch effect both celltypes
+## combined
+plgINS::plPCA(assays(se)$logcpm, as.data.frame(colData(se)), colorBy = "rep", shapeBy = "cell",
+              add.labels = FALSE, annotation_columns = colnames(colData(se))[c(4,3,5)])
+```
+
+### ESC
+
+```{r pca esc, message=FALSE, warning=FALSE, eval=TRUE}
+
+# plot PCA to check for batch effect ESC
+## ESC
+plgINS::plPCA(assays(se.esc)$logcpm, as.data.frame(colData(se.esc)), colorBy = "rep", 
+              add.labels = FALSE, annotation_columns = colnames(colData(se.esc))[c(4,5)])
+```
+
+### iN
+
+```{r pca in, message=FALSE, warning=FALSE, eval=TRUE}
+
+# plot PCA to check for batch effect iN
+## iN
+plgINS::plPCA(assays(se.in)$logcpm, as.data.frame(colData(se.in)), colorBy = "rep", 
+              add.labels = FALSE, annotation_columns = colnames(colData(se.in))[c(4,5)])
+
+```
+
+## DEA
+
+```{r dea variables, message=FALSE, warning=FALSE, eval=TRUE}
+
+# define variables for individual DEAs
+ctrl <- "ctrl"
+mirna <- unique(as.character(se$miRNA[se$miRNA!=ctrl]))
+dea.names <- paste0(unique(se$miRNA[se$miRNA!=ctrl]),"vWT")
+# select reference factors
+se$miRNA <- relevel(droplevels(se$miRNA), ref=ctrl)
+```
+
+```{r dea combined, message=FALSE, warning=FALSE, eval=TRUE}
+
+source("functions/dea.R")
+
+# DEA over all treatments
+## ESC
+se.esc <- DEA(se[,se$cell=="ESC"], name="all", model = ~isRepA+miRNA, model0 = ~isRepA)
+## iN
+se.in <- DEA(se[,se$cell=="iN"], name="all", model = ~isRepA+miRNA, model0 = ~isRepA)
+```
+
+```{r dea individual, message=FALSE, warning=FALSE, eval=TRUE}
+
+source("functions/dea.R")
+
+# DEAs of individual treatments
+## ESC
+for(i in 1:length(mirna)){
+  se.esc <- DEA(se.esc, use=se.esc$miRNA %in% c(ctrl,mirna[i]), name=dea.names[i], model = ~isRepA+miRNA, model0 = ~isRepA)
+}
+## iN
+for(i in 1:length(mirna)){
+  se.in <- DEA(se.in, use=se.in$miRNA %in% c(ctrl,mirna[i]), name=dea.names[i], model = ~isRepA+miRNA, model0 = ~isRepA)
+}
+```
+
+```{r add logfc, message=FALSE, warning=FALSE, results='hide', eval=TRUE}
+
+# add logFC assay
+## ESC
+se.esc <- plgINS::svacor(se.esc, form = ~isRepA+miRNA, form0 = ~isRepA)
+se.esc <- SEtools::log2FC(se.esc, controls = se.esc$miRNA==ctrl, by = se.esc$readtype, fromAssay = "corrected", isLog = TRUE)
+## iN
+se.in <- plgINS::svacor(se.in, form = ~isRepA+miRNA, form0 = ~isRepA)
+se.in <- SEtools::log2FC(se.in, controls = se.in$miRNA==ctrl, fromAssay = "corrected", isLog = TRUE)
+```
+
+## Export
+
+```{r dea export, warning=FALSE, message=FALSE, eval=TRUE}
+
+# round
+source("functions/roundSE.R")
+se.esc <- roundSE(se.esc)
+se.in <- roundSE(se.in)
+# export
+saveRDS(se.esc, "data/whipple.esc.DEA.SE.rds")
+saveRDS(se.in, "data/whipple.in.DEA.SE.rds")
+```
+
+```{r dea import, warning=FALSE, message=FALSE, eval=FALSE}
+
+# import
+se.esc <- readRDS("data/whipple.esc.DEA.SE.rds")
+se.in <- readRDS("data/whipple.in.DEA.SE.rds")
+```
+
+## Stats
+
+### libsizes
+
+#### ESC
+
+```{r dea stats esc, message=FALSE, warning=FALSE, eval=TRUE}
+
+# number of significant transcripts ESC
+sapply(rowData(se.esc)[,grepl("DEA",colnames(rowData(se.esc)))], function(x) sum(x$FDR < .05) )
+```
+
+#### iN
+
+```{r dea stats in, message=FALSE, warning=FALSE, eval=TRUE}
+
+# number of significant transcripts iN
+sapply(rowData(se.in)[,grepl("DEA",colnames(rowData(se.in)))], function(x) sum(x$FDR < .05) )
+```
+
+### up-/downregulations at different significance levels
+
+```{r significance signs function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# check number of positive & negative logFC for different significances
+
+sigsDF <- function(se, sig, dea, thr){
+  data.frame(sigLevel=rep(sig,3),
+             counts=c(sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == -1 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr)),
+                      sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == 0 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr)),
+                      sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == 1 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr))
+                      ),
+             sign=c(rep("-1",length(sig)),
+                    rep("0",length(sig)),
+                    rep("1",length(sig))
+                    ),
+             dea=rep(dea,length(sig)*3)
+             )
+}
+```
+
+```{r significance signs, message=FALSE, warning=FALSE, eval=TRUE}
+
+# for each model & DEA: find number of down- & upregulations at different significance levels
+
+## significance levels of interest
+sig <- c(1e-10, 1e-5, .05, .1, .5, .8)
+## only absolute log2FC greater than this will be considered
+fc.thr <- .5
+
+## create dataframes with count informations
+### ESC [model = ~isRepA+miRNA, model0 = ~isRepA]
+sigs.esc <- lapply(grep("DEA",colnames(rowData(se.esc)),value=TRUE), function(x){
+  sigsDF(se.esc, sig, x, fc.thr)
+})
+sigs.esc <- data.frame(do.call("rbind",sigs.esc))
+### iN [model = ~isRepA+miRNA, model0 = ~isRepA]
+sigs.in <- lapply(grep("DEA",colnames(rowData(se.in)),value=TRUE), function(x){
+  sigsDF(se.in, sig, x, fc.thr)
+})
+sigs.in <- data.frame(do.call("rbind",sigs.in))
+```
+
+#### ESC
+
+```{r signs plot esc, message=FALSE, warning=FALSE, fig.width=12, eval=TRUE}
+
+### ESC [model = ~isRepA+miRNA, model0 = ~isRepA]
+ggplot(sigs.esc, aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea)
+```
+
+#### iN
+
+```{r signs plot in, message=FALSE, warning=FALSE, fig.width=12, eval=TRUE}
+
+### iN [model = ~isRepA+miRNA, model0 = ~isRepA]
+ggplot(sigs.in, aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea)
+```
+
+

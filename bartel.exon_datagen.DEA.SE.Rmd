@@ -1,0 +1,764 @@
+---
+title: "Bartel enrichMiR exon analysis"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+    html_document:
+        toc: true
+        toc_float: true
+        theme: 'cerulean'
+        highlight: 'tango'
+        code_folding: hide
+        df_print: paged
+---
+
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(SummarizedExperiment)
+  library(SEtools)
+  library(ggplot2)
+  library(plgINS)
+  library(edgeR)
+})
+```
+
+## Loading
+
+```{r bartel import, message=FALSE, warning=FALSE, eval=TRUE}
+
+# load splice SE (the individual HeLa & HEK datasets are only used for colData generation)
+se.splicing <- readRDS("data/raw/bartel.splicing.raw.SE.rds")
+se.hela <- readRDS( "data/bartel.hela.DEA.SE.rds")
+se.hek <- readRDS("data/bartel.hek.DEA.SE.rds")
+```
+
+```{r bartel modify, message=FALSE, warning=FALSE, eval=TRUE}
+
+# create colData info for SE
+colData(se.splicing) <- cbind(colData(se.splicing), rbind(colData(se.hela)[se.hela$miRNA!="CTRL",], colData(se.hek)[se.hek$miRNA!="CTRL",])[colnames(se.splicing),])
+
+# separate the 2 cell lines
+se.hela <- se.splicing[,se.splicing$Cell_Line=="HeLa"]
+se.hek <- se.splicing[,se.splicing$Cell_Line!="HeLa"]
+
+# filter
+sel <- c(10, 2)
+se.hela <- se.hela[rowSums(assay(se.hela) >= sel[1]) >= sel[2],]
+se.hek <- se.hek[rowSums(assay(se.hek) >= sel[1]) >= sel[2],]
+```
+
+## Prep
+
+```{r generate control function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# supplementary function integrated into the DEAprep() function below:
+# generates control samples out of the average values over all supplied samples
+
+genCTRL <- function(se, readtype, logcpm){
+  # e.ctrl <- sapply(unique(se$Batch), ls=min(colSums(assays(se)[[readtype]])),
+  #                        FUN=function(x,ls){
+  #                          rowMedians(exp(assays(se)[[logcpm]][,se$Batch==x])-1) * ls/1000000
+  #                          }
+  #                        )
+  e.ctrl <- sapply(unique(se$Batch), ls=colSums(assays(se)[[readtype]]),
+                         FUN=function(x,ls){
+                           rowMedians(expm1(assays(se)[[logcpm]][,se$Batch==x])) * median(ls[se$Batch==x])/1000000
+                           }
+                         )
+
+  ### generate colnames
+  n.cols <- sapply( unique(se$Batch), FUN=function(x) var_name <- paste("CTRL", x, sep=".") )
+  colnames(e.ctrl) <- n.cols
+  rownames(e.ctrl) <- rownames(se)
+  return(e.ctrl)
+  }
+```
+
+```{r dea prep function, message=FALSE, warning=FALSE, eval=TRUE}
+
+
+#' DEAprep
+#'
+#' Generates control samples out of the average values over all supplied samples, combines spliced and unspliced
+#' assays and calculates their logCPM & log2FC data. 
+#' All is assembled into one SE object. 
+#' 
+#'
+#' @param se SummarizedExperiment object containing assays of raw counts of spliced & unspliced tx
+#'
+#' @return an SE object of combined spliced and unspliced data as well as control samples generated from averaging over all treatment samples
+#' 
+DEAprep <- function(se){
+  
+  # allocation
+  
+  e1 <- assays(se)$spliced
+  e2 <- assays(se)$unspliced
+  readtype1 <- "spliced"
+  readtype2 <- "unspliced"
+  
+  
+  # generate control
+  
+  ## create logcpm assays for both spliced & unspliced assays
+  assays(se)$logcpm.spliced <- log1p(cpm(calcNormFactors(DGEList(assays(se)$spliced))))
+  assays(se)$logcpm.unspliced <- log1p(cpm(calcNormFactors(DGEList(assays(se)$unspliced))))
+
+  ## generate a 'control' sample out of the median normalized counts over all samples
+  e.ctrl1 <- genCTRL(se, readtype1, "logcpm.spliced")
+  e.ctrl2 <- genCTRL(se, readtype2, "logcpm.unspliced")
+  
+  ## add control samples to assays & generate DGEList object
+  dds1 <- DGEList(cbind(e1, e.ctrl1))
+  dds2 <- DGEList(cbind(e2, e.ctrl2))
+  
+  ## combine the spliced & unspliced assays
+  dds <- cbind(dds1, dds2)
+
+  
+  # generate colData
+  
+  dd1 <- rbind(colData(se)[,c("Batch","miRNA","Cell_Line")], 
+               data.frame(Batch=unique(se$Batch), miRNA="CTRL", Cell_Line=unique(se$Cell_Line)))
+  dd1$readtype <- readtype1
+  
+  ## duplicate dd to have data for combined spliced & unspliced assay
+  dd <- rbind(dd1, dd1)
+  dd$readtype[(nrow(dd1)+1):nrow(dd)] <- readtype2
+  dd$readtype <- as.factor(dd$readtype)
+  
+  ## rename both dds & dd object features
+  n.cols1 <- sapply(colnames(dds1), FUN=function(x)
+      var_name <- paste(x, readtype1, sep=".") )
+  n.cols2 <- sapply(colnames(dds2), FUN=function(x)
+      var_name <- paste(x, readtype2, sep=".") )
+  
+  colnames(dds) <- c(n.cols1, n.cols2)
+  rownames(dd) <- c(n.cols1, n.cols2)
+  
+  
+  # rebuild SE object
+  
+  ## SE object with logCPM assay
+  se <- SummarizedExperiment(assays=list(counts=dds$counts), 
+                             rowData=rowData(se), 
+                             colData=dd) 
+  assays(se)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se)))))
+  
+  return(se)
+}
+```
+
+```{r dea prep, message=FALSE, warning=FALSE, eval=TRUE}
+
+# generate SE object with extrapolated control samples combined spliced & unspliced assays
+se.hela <- DEAprep(se.hela)
+se.hek <- DEAprep(se.hek)
+```
+
+## PCA
+
+### HeLa
+
+```{r bartel pca hela, message=FALSE, warning=FALSE, eval=TRUE}
+
+# plot PCA to check for batch effect HeLa
+
+## combined HeLa
+plgINS::plPCA(assays(se.hela)$logcpm, as.data.frame(colData(se.hela)), colorBy = "Batch", shapeBy = "readtype",
+              add.labels = FALSE, annotation_columns = colnames(colData(se.hela))[c(1,2,4)])
+## spliced HeLa
+plgINS::plPCA(assays(se.hela)$logcpm[,se.hela$readtype=="spliced"], as.data.frame(colData(se.hela)), colorBy = "Batch", 
+              add.labels = FALSE, annotation_columns = colnames(colData(se.hela))[c(1,2,4)])
+## unspliced HeLa
+plgINS::plPCA(assays(se.hela)$logcpm[,se.hela$readtype=="unspliced"], as.data.frame(colData(se.hela)), colorBy = "Batch", 
+              add.labels = FALSE, annotation_columns = colnames(colData(se.hela))[c(1,2,4)])
+```
+
+### HEK
+
+```{r bartel pca hek, message=FALSE, warning=FALSE, eval=TRUE}
+
+# plot PCA to check for batch effect HEK
+
+## combined HEK
+plgINS::plPCA(assays(se.hek)$logcpm, as.data.frame(colData(se.hek)), colorBy = "Batch", shapeBy = "readtype",
+              add.labels = FALSE, annotation_columns = colnames(colData(se.hek))[c(1,2,4)])
+## spliced HEK
+plgINS::plPCA(assays(se.hek)$logcpm[,se.hek$readtype=="spliced"], as.data.frame(colData(se.hek)), colorBy = "Batch", 
+              add.labels = FALSE, annotation_columns = colnames(colData(se.hek))[c(1,2,4)])
+## unspliced HEK
+plgINS::plPCA(assays(se.hek)$logcpm[,se.hek$readtype=="unspliced"], as.data.frame(colData(se.hek)), colorBy = "Batch", 
+              add.labels = FALSE, annotation_columns = colnames(colData(se.hek))[c(1,2,4)])
+
+```
+
+## DEA
+
+```{r exon dea function, message=FALSE, warning=FALSE, eval=TRUE}
+
+#' exonDEA
+#'
+#' @param se SE object containing assays with combined spliced & unspliced counts
+#' @param model function: model matrix function to test
+#' @param model0 function: model matrix function to be tested against
+#' @param control string: name of control samples inside colData() of supplied SE object
+#'
+#' @return SE object containing DEA results over all treatments & over individual ones
+#' 
+exonDEA <- function(se, model, model0=~1, control){
+  
+  ## allocation
+  se$miRNA <- relevel(droplevels(se$miRNA), ref=control)
+  se$readtype <- relevel(se$readtype, ref="unspliced")
+  se$Batch <- droplevels(se$Batch)
+  dd <- colData(se)
+  ## normalization
+  dds <- calcNormFactors(DGEList(assays(se)$counts))
+  ## models
+  mm <- model.matrix(model, data=dd)
+  mm0 <- model.matrix(model0, data=dd)
+  testCoeff <- setdiff(colnames(mm), colnames(mm0))
+  ## estimate dispersion
+  dds <- estimateDisp(dds,mm)
+  ## fit negative binomial distribution on counts per gene (use glmFit for few replicates)
+  fit <- glmFit(dds, mm)
+  ## fit a GLM on the data
+  lrt.comb <- glmLRT(fit, testCoeff)
+  ## top genes that change relative to stage 0
+  res.comb <- as.data.frame(topTags(lrt.comb, Inf))
+  ## fit linear model dropping one sample at a time (using multiple cores)
+  res.list <- bplapply( testCoeff, BPPARAM=MulticoreParam(8), FUN=function(x){
+    as.data.frame(topTags(glmLRT(fit, x),Inf))
+  })
+  dea.names <- gsub("readtype","", testCoeff)
+  dea.names <- make.names(gsub(":miRNA",".", dea.names))
+  colnames(res.comb)[grepl("logFC",colnames(res.comb))] <- paste0("logFC.", dea.names)
+  names(res.list) <- paste0("DEA.",dea.names)
+  
+  ## add DEAs
+  rowData(se)$DEA.spliced.all <- DataFrame(res.comb[rownames(se),])
+  for(i in paste0("DEA.",dea.names)){
+    rowData(se)[[i]] <- DataFrame(res.list[[i]][rownames(se),])
+  }
+
+  ## add logFC assay
+  se <- plgINS::svacor(se, form = model, form0 = model0)
+  se <- SEtools::log2FC(se, controls = se$miRNA==control, by = se$readtype, fromAssay = "corrected", isLog = TRUE)
+  
+  return(se)
+}
+```
+
+```{r exon dea comb, message=FALSE, warning=FALSE, eval=TRUE}
+
+# bartel hela & hek DEA with exon resolution
+## combined readtype:miRNA effect
+se.hela.comb <- exonDEA(se.hela, model = ~readtype*miRNA, model0 = ~readtype+miRNA, control="CTRL")
+sapply(rowData(se.hela.comb)[,grepl("DEA",colnames(rowData(se.hela.comb)))], function(x) sum(x$FDR < .05) )
+
+se.hek.comb <- exonDEA(se.hek, model = ~readtype*miRNA, model0 = ~readtype+miRNA, control="CTRL")
+sapply(rowData(se.hek.comb)[,grepl("DEA",colnames(rowData(se.hek.comb)))], function(x) sum(x$FDR < .05) )
+
+```
+
+```{r exon dea batch, message=FALSE, warning=FALSE, eval=TRUE}
+
+# bartel hela & hek DEA with exon resolution
+## batch effect included
+se.hela.batch <- exonDEA(se.hela, model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA, "CTRL")
+sapply(rowData(se.hela.batch)[,grepl("DEA",colnames(rowData(se.hela.batch)))], function(x) sum(x$FDR < .05) )
+
+se.hek.batch <- exonDEA(se.hek, model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA, "CTRL")
+sapply(rowData(se.hek.batch)[,grepl("DEA",colnames(rowData(se.hek.batch)))], function(x) sum(x$FDR < .05) )
+
+```
+
+```{r exon dea test, message=FALSE, warning=FALSE, eval=TRUE}
+
+# bartel hela & hek DEA with exon resolution
+## miRNA effect
+se.hela.test <- exonDEA(se.hela, model = ~readtype+miRNA, model0 = ~readtype, "CTRL")
+sapply(rowData(se.hela.test)[,grepl("DEA",colnames(rowData(se.hela.test)))], function(x) sum(x$FDR < .05) )
+
+se.hek.test <- exonDEA(se.hek, model = ~readtype+miRNA, model0 = ~readtype, "CTRL")
+sapply(rowData(se.hek.test)[,grepl("DEA",colnames(rowData(se.hek.test)))], function(x) sum(x$FDR < .05) )
+
+```
+
+```{r exon dea test2, message=FALSE, warning=FALSE, eval=TRUE}
+
+# bartel hela & hek DEA with exon resolution
+## miRNA & combined exon:miRNA effect
+se.hela.test2 <- exonDEA(se.hela, model = ~readtype*miRNA, model0 = ~readtype, "CTRL")
+sapply(rowData(se.hela.test2)[,grepl("DEA",colnames(rowData(se.hela.test2)))], function(x) sum(x$FDR < .05) )
+
+se.hek.test2 <- exonDEA(se.hek, model = ~readtype*miRNA, model0 = ~readtype, "CTRL")
+sapply(rowData(se.hek.test2)[,grepl("DEA",colnames(rowData(se.hek.test2)))], function(x) sum(x$FDR < .05) )
+
+```
+
+## Plots
+
+```{r heatmap function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# heatmap function
+
+makeHM <- function(se, sig, nr=20, logcpm=FALSE){
+  for(i in sig){
+    if(sum(rowData(se)$DEA.spliced.all$FDR < i) > nr){
+      cat("FDR <", i, "\n")
+      # logFC heatmap
+      SEtools::sehm(se[,order(colData(se)$miRNA)], row.names(se)[rowData(se)$DEA.spliced.all$FDR < i], gaps_at = "readtype",
+                breaks=TRUE, do.scale = FALSE, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+      # logcpm heatmap
+      se.sp <- se[,colData(se)$readtype=="spliced"]
+      if(logcpm){
+        SEtools::sehm(se.sp[,order(colData(se.sp)$miRNA)], row.names(se.sp)[rowData(se.sp)$DEA.spliced.all$FDR < i], gaps_at = "readtype",
+                breaks=TRUE, do.scale = TRUE, show_colnames = FALSE, assayName = "logcpm", anno_columns = c("miRNA","readtype"))
+      }
+      break
+    }
+  }
+}
+```
+
+```{r heatmap allocation, message=FALSE, warning=FALSE, eval=TRUE}
+
+# allocation
+sig.lvl <- c(1e-5,1e-3,.05,.1,.5,.8)
+```
+
+### HeLa
+
+```{r heatmap hela, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+# combined [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+makeHM(se.hela.comb, sig.lvl)
+
+# batch [model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA]
+makeHM(se.hela.batch, sig.lvl)
+
+# test [model = ~readtype+miRNA, model0 = ~readtype]
+makeHM(se.hela.test, sig.lvl)
+
+# test2 [model = ~readtype*miRNA, model0 = ~readtype]
+makeHM(se.hela.test2, sig.lvl)
+```
+
+```{r MA plot hela, message=FALSE, warning=FALSE, eval=TRUE}
+
+# logCPM vs logFC scatterplot HeLa
+LSD:::heatscatter(as.vector(assays(se.hela.comb)$logcpm),as.vector(assays(se.hela.comb)$log2FC))
+abline(a=0, b=0)
+```
+
+### HEK
+
+```{r heatmap hek, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+# combined [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+makeHM(se.hek.comb, sig.lvl)
+
+# batch [model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA]
+makeHM(se.hek.batch, sig.lvl)
+
+# test [model = ~readtype+miRNA, model0 = ~readtype]
+makeHM(se.hek.test, sig.lvl)
+
+# test2 [model = ~readtype*miRNA, model0 = ~readtype]
+makeHM(se.hek.test2, sig.lvl)
+```
+
+```{r MA plot hek, message=FALSE, warning=FALSE, eval=TRUE}
+
+# logCPM vs logFC scatterplot HEK
+LSD:::heatscatter(as.vector(assays(se.hek.comb)$logcpm),as.vector(assays(se.hek.comb)$log2FC))
+abline(a=0, b=0)
+```
+
+## Stats
+
+### ratios
+
+```{r spliced ratios, message=FALSE, warning=FALSE, eval=TRUE}
+
+# spliced v unspliced HeLa
+lib.hela.spliced <- apply(assays(se.hela.comb[,colData(se.hela.comb)$readtype=="spliced"])$counts, 2, function(x) sum(x))
+lib.hela.unspliced <- apply(assays(se.hela.comb[,colData(se.hela.comb)$readtype=="unspliced"])$counts, 2, function(x) sum(x))
+
+median(lib.hela.unspliced / lib.hela.spliced)
+
+# spliced v unspliced HEK
+lib.hek.spliced <- apply(assays(se.hek.comb[,colData(se.hek.comb)$readtype=="spliced"])$counts, 2, function(x) sum(x))
+lib.hek.unspliced <- apply(assays(se.hek.comb[,colData(se.hek.comb)$readtype=="unspliced"])$counts, 2, function(x) sum(x))
+
+median(lib.hek.unspliced / lib.hek.spliced)
+```
+
+### up-/downregulations at different significance levels
+
+```{r significance signs function}
+
+# check number of positive & negative logFC for different significances
+
+sigsDF <- function(se, sig, dea, thr){
+  data.frame(sigLevel=rep(sig,3),
+             counts=c(sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == -1 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr)),
+                      sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == 0 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr)),
+                      sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == 1 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr))
+                      ),
+             sign=c(rep("-1",length(sig)),
+                    rep("0",length(sig)),
+                    rep("1",length(sig))
+                    ),
+             dea=rep(dea,length(sig)*3)
+             )
+}
+```
+
+```{r significance signs}
+
+# for each model & DEA: find number of down- & upregulations at different significance levels
+
+## significance levels of interest
+sig <- c(1e-10, 1e-5, .05, .1, .5)
+## only absolute log2FC greater than this will be considered
+fc.thr <- .5
+
+## create dataframes with count informations
+### HeLa [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+sigs.hela <- lapply(grep("DEA",colnames(rowData(se.hela.comb)),value=TRUE), function(x){
+  sigsDF(se.hela.comb, sig, x, fc.thr)
+})
+sigs.hela <- data.frame(do.call("rbind",sigs.hela))
+
+### HeLa [model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA]
+sigs.hela.batch <- lapply(grep("DEA",colnames(rowData(se.hela.batch)),value=TRUE), function(x){
+  sigsDF(se.hela.batch, sig, x, fc.thr)
+})
+sigs.hela.batch <- data.frame(do.call("rbind",sigs.hela.batch))
+
+
+### HEK [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+sigs.hek <- lapply(grep("DEA",colnames(rowData(se.hek.comb)),value=TRUE), function(x){
+  sigsDF(se.hek.comb, sig, x, fc.thr)
+})
+sigs.hek <- data.frame(do.call("rbind",sigs.hek))
+
+### HEK [model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA]
+sigs.hek.batch <- lapply(grep("DEA",colnames(rowData(se.hek.batch)),value=TRUE), function(x){
+  sigsDF(se.hek.batch, sig, x, fc.thr)
+})
+sigs.hek.batch <- data.frame(do.call("rbind",sigs.hek.batch))
+```
+
+```{r significance plot hela, message=FALSE, warning=FALSE, eval=TRUE}
+
+### [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+ggplot(sigs.hela[sigs.hela$dea=="DEA.spliced.all",], aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity")
+```
+
+```{r significance plot hela wrap, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+### [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+ggplot(sigs.hela[sigs.hela$dea!="DEA.spliced.all",], aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea)
+```
+
+```{r significance plot hela batch, message=FALSE, warning=FALSE, eval=TRUE}
+
+### [model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA]
+ggplot(sigs.hela.batch[sigs.hela.batch$dea=="DEA.spliced.all",], aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity")
+```
+
+```{r significance plot hela batch wrap, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+### [model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA]
+ggplot(sigs.hela.batch[sigs.hela.batch$dea!="DEA.spliced.all",], aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea)
+```
+
+```{r significance plot hek, message=FALSE, warning=FALSE, eval=TRUE}
+
+### HEK [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+ggplot(sigs.hek[sigs.hek$dea=="DEA.spliced.all",], aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity")
+```
+
+```{r significance plot hek wrap, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+### HEK [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+ggplot(sigs.hek[sigs.hek$dea!="DEA.spliced.all",], aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea)
+```
+
+```{r significance plot hek batch, message=FALSE, warning=FALSE, eval=TRUE}
+
+### HEK [model = ~Batch+readtype*miRNA, model0 = ~Batch+readtype+miRNA]
+ggplot(sigs.hek.batch[sigs.hek.batch$dea=="DEA.spliced.all",], aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity")
+```
+
+```{r significance plot hek batch wrap, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+### HEK [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+ggplot(sigs.hek.batch[sigs.hek.batch$dea!="DEA.spliced.all",], aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea)
+```
+
+## Investigate upregulated spliced tx
+
+### Analysis
+
+```{r load enrichmir ts, message=FALSE, warning=FALSE, eval=TRUE}
+
+# load TS object
+TS <- readRDS( "data/TargetScan_all.rds")
+```
+
+```{r load bartel treatments, message=FALSE, warning=FALSE, eval=TRUE}
+
+# load detailed Bartel treatment info containing exact sequences
+pert <- read.csv("data/bartel_treatments.txt", sep = "\t")
+
+# we extract HeLa & HEK data (we disregard passenger strands as long as we're working with TargetScan)
+colnames(pert) <- c("treatment","seq")
+pert <- list(pert[1:17,], pert[37:48,])
+names(pert) <- c("hela","hek")
+
+# find out where the seed sequence begins
+#unlist(gregexpr(pattern ="GAGGUAG",pert$seq))
+#unlist(gregexpr(pattern ="GGAAUGU",pert$seq))
+
+# extract seed sequences
+pert <- lapply(pert, function(x){
+  seed <- data.frame(seed=sapply(x$seq, function(y) substring(y ,2, 8)))
+  x <- cbind(x, seed)
+})
+```
+
+```{r control analysis function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# Check if log2FC upregulations are due to skewed controls 
+
+
+ctrlAnalysis <- function(se, pert, TS, fc.degree){
+  
+  ## vector of Bartel miRNA treatments and their corresponding seeds (based on actual miRNA seqs)
+  pert.seed <- sapply(se$miRNA[se$miRNA!="CTRL" & se$readtype=="spliced"], function(x){
+    as.character(pert$seed[grepl(paste0(x,"$"), pert$treatment) | grepl(paste0(x,"\\("), pert$treatment)])
+    })
+  names(pert.seed) <- se$miRNA[se$miRNA!="CTRL" & se$readtype=="spliced"]
+  
+  ## adjusted gene names to be identical to TS names
+  fc.genes <- as.character(rowData(se)$gene_name)
+  ## only consider common genes
+  id <- fc.genes %in% TS$feature
+  ## significant ids
+  id.sig <- id & rowData(se)$DEA.spliced.all$FDR < .05
+  
+  ## aggregate logFC by genes
+  logfc <- cbind(as.data.frame(assays(se)$log2FC),fc.genes)
+  logfc <- aggregate(logfc[,colnames(logfc)!="fc.genes"], by=list(logfc$fc.genes), FUN="sum")
+  rownames(logfc) <- logfc$Group.1
+  logfc.sign <- logfc.sign.deg <- sign(logfc[,colnames(logfc)!="Group.1"])
+  
+  ## update gene names, DEA and IDs: aggregate by genes
+  ### aggregate DEA FDR info
+  fdr <- rowData(se)$DEA.spliced.all
+  rownames(fdr) <- fc.genes
+  fdr <- aggregate(fdr[fc.genes[id],"FDR"], by=list(rownames(fdr[fc.genes[id],])), FUN="min")
+  rownames(fdr) <- fdr$Group.1
+  colnames(fdr) <- c("genes","FDR")
+  ### adjusted gene names to be identical to TS names
+  fc.genes <- rownames(logfc)
+  ### only consider common genes
+  id <- fc.genes %in% TS$feature
+  ### significant ids
+  id.sig <- fc.genes %in% rownames(fdr)[fdr$FDR<.05]
+  
+  ## for splicing: only genes common with TS & with logfc createer than 'fc.degree' & significant FDR
+  logfc.sign.deg[logfc[,colnames(logfc)!="Group.1"] < fc.degree] <- 0
+  logfc.sign.deg <- logfc.sign.deg[rownames(logfc.sign.deg) %in% fc.genes[id.sig] & rowSums(logfc.sign.deg)>0, se$miRNA!="CTRL"]
+  ## for control: only genes common with TS
+  logfc.sign <- logfc.sign[rownames(logfc.sign) %in% fc.genes[id], se$miRNA!="CTRL"]
+             
+  
+  ## to find treatment miRNA for each gene for which the logFC are upregulated
+  nonUpregSeeds <- function(readtype, logfc, pert.seed){
+    l <- lapply(readtype, function(i){
+      apply(logfc[,readtype==i], 1, function(x){
+        pert.seed[x!=1]
+        })
+      })
+    return(l)
+  }
+  
+  ## splicing: find treatment miRNAs potentially targeting each gene
+  n <- nonUpregSeeds(unique(se$readtype), logfc.sign.deg, pert.seed)
+  names(n) <- unique(se$readtype)
+  ## control: background distribution of upregulation instances for each gene
+  m <- nonUpregSeeds(unique(se$readtype), logfc.sign, pert.seed)
+  names(m) <- paste0("ctrl.",unique(se$readtype))
+  ## combine
+  n <- c(n,m)
+  
+  
+  ## for each common gene select the miRNA families that target them (using TargetScan data)
+  ts.all <- lapply(fc.genes[id], function(x){
+    TS$family[TS$feature==x]
+    })
+  names(ts.all) <- fc.genes[id]
+  ts.list <- list(splicing=ts.all[fc.genes[id.sig]], ctrl=ts.all[fc.genes[id]])
+  
+  ## ratio of treatment miRNA are in the TS target list
+  ratios <- lapply(n, function(x){
+    if( length(x)==nrow(logfc.sign) ){
+      sapply( names(x), function(y) sum(x[[y]] %in% ts.list$ctrl[[y]])/length(x[[y]]) )
+    } else {
+      sapply( names(x), function(y) sum(x[[y]] %in% ts.list$splicing[[y]])/length(x[[y]]) )
+    }
+  })
+  
+  # output
+  
+  return(list(n=n,ratios=ratios))
+}
+```
+
+```{r control analysis, message=FALSE, warning=FALSE, eval=TRUE}
+
+# Check if log2FC upregulations are due to skewed controls 
+
+## call function
+ca.hela <- ctrlAnalysis(se.hela.comb, pert$hela, TS, .5)
+ca.hek <- ctrlAnalysis(se.hek.comb, pert$hek, TS, .5)
+```
+
+```{r control analysis df function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# function to generate dataframes for plotting
+
+dfGen <- function(ca){
+  df <- data.frame(
+  counts=unlist(lapply(ca$n, function(x) sapply(x, length))),
+  ratios=unlist(lapply(ca$ratios, function(x) x)),
+  id=unlist(lapply(names(ca$n), function(x) rep(x, length(ca$n[[x]])))),
+  readtype=c(rep("spliced",length(ca$n$spliced)),
+             rep("unspliced",length(ca$n$unspliced)),
+             rep("spliced",length(ca$n$ctrl.spliced)),
+             rep("unspliced",length(ca$n$ctrl.unspliced)) )
+  )
+  return(df)
+}
+```
+
+```{r control analysis df, message=FALSE, warning=FALSE, eval=TRUE}
+
+# generate dataframes for plotting
+df <- lapply(list(ca.hela,ca.hek), function(ca) dfGen(ca))
+names(df) <- c("hela","hek")
+```
+
+### plots HeLa
+
+```{r control plots hela, message=FALSE, warning=FALSE, fig.width=12, eval=TRUE}
+
+# plots HeLa
+
+## to be able to affect the controls, the combined targeting of the treatment miRNAs must be in the majority
+ggplot(df$hela, aes(counts)) + geom_density(aes(fill=id), alpha=0.9, na.rm=TRUE)  + facet_wrap(~readtype) + 
+  geom_vline(aes(xintercept = ncol(se.hela.comb[,se.hela.comb$miRNA!="CTRL" & se.hela.comb$readtype=="spliced"])/2), color="red")
+
+ggplot(df$hela, aes(x=readtype,y=counts,fill=id)) + geom_boxplot()
+
+n.means <- sapply(unique(df$hela$id), function(x) mean(df$hela$counts[df$hela$id==x]))
+names(n.means) <- unique(df$hela$id)
+n.means
+
+n.medians <- sapply(unique(df$hela$id), function(x) median(df$hela$counts[df$hela$id==x]))
+names(n.medians) <- unique(df$hela$id)
+n.medians
+
+## check what ratio of treatment miRNA are in the TS target list (logit)
+ggplot(df$hela, aes(log(ratios/(1 - ratios)))) + geom_density(aes(fill=id), alpha=0.5, na.rm=TRUE)  + facet_wrap(~readtype)
+## check what ratio of treatment miRNA are in the TS target list
+ggplot(df$hela, aes(ratios)) + geom_density(aes(fill=id), alpha=0.6, na.rm=TRUE)  + facet_wrap(~readtype)
+
+ggplot(df$hela, aes(x=readtype,y=ratios,fill=id)) + geom_boxplot()
+
+sapply(ca.hela$ratios, mean, na.rm=TRUE)
+sapply(ca.hela$ratios, median, na.rm=TRUE)
+```
+
+### plots HEK
+
+```{r control plots hek, message=FALSE, warning=FALSE, fig.width=12, eval=TRUE}
+
+# plots HEK
+
+## to be able to affect the controls, the combined targeting of the treatment miRNAs must be in the majority
+ggplot(df$hek, aes(counts)) + geom_density(aes(fill=id), alpha=0.9, na.rm=TRUE)  + facet_wrap(~readtype) + 
+  geom_vline(aes(xintercept = ncol(se.hek.comb[,se.hek.comb$miRNA!="CTRL" & se.hek.comb$readtype=="spliced"])/2), color="red")
+
+ggplot(df$hek, aes(x=readtype,y=counts,fill=id)) + geom_boxplot()
+
+n.means <- sapply(unique(df$hek$id), function(x) mean(df$hek$counts[df$hek$id==x]))
+names(n.means) <- unique(df$hek$id)
+n.means
+
+n.medians <- sapply(unique(df$hek$id), function(x) median(df$hek$counts[df$hek$id==x]))
+names(n.medians) <- unique(df$hek$id)
+n.medians
+
+## check what ratio of treatment miRNA are in the TS target list (logit)
+ggplot(df$hek, aes(log(ratios/(1 - ratios)))) + geom_density(aes(fill=id), alpha=0.5, na.rm=TRUE)  + facet_wrap(~readtype)
+## check what ratio of treatment miRNA are in the TS target list
+ggplot(df$hek, aes(ratios)) + geom_density(aes(fill=id), alpha=0.6, na.rm=TRUE)  + facet_wrap(~readtype)
+
+ggplot(df$hek, aes(x=readtype,y=ratios,fill=id)) + geom_boxplot()
+
+sapply(ca.hela$ratios, mean, na.rm=TRUE)
+sapply(ca.hela$ratios, median, na.rm=TRUE)
+```
+
+Summary: As expected, there seem to be genes that are similarly upregulated over a majority of the treatment miRNA. They thus skew the control samples we created (average counts over all treatments for each gene). To eliminate this distortion we exclude these genes from the datasets.  
+
+## Export
+
+```{r dea exclude skewed, warning=FALSE, message=FALSE, eval=TRUE}
+
+# exclude skewing genes
+se.hela.batch <- se.hela.batch[!(rowData(se.hela.batch)$gene_name %in% names(ca.hela$n$spliced)),]
+se.hek.batch <- se.hek.batch[!(rowData(se.hek.batch)$gene_name %in% names(ca.hek$n$spliced)),]
+```
+
+```{r dea export, warning=FALSE, message=FALSE, eval=TRUE}
+
+# round
+source("functions/roundSE.R")
+se.hela.batch <- roundSE(se.hela.batch)
+se.hek.batch <- roundSE(se.hek.batch)
+# export
+saveRDS(se.hela.batch, "data/bartel.hela.exon.DEA.SE.rds")
+saveRDS(se.hek.batch, "data/bartel.hek.exon.DEA.SE.rds")
+```
+
+```{r excluded genes export, warning=FALSE, message=FALSE, eval=TRUE}
+
+# export excluded genes
+saveRDS(names(ca.hela$n$spliced), "data/bartel.hela.excludedGenes.rds")
+saveRDS(names(ca.hek$n$spliced), "data/bartel.hek.excludedGenes.rds")
+```
+
+
+

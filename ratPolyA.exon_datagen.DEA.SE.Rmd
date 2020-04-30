@@ -1,0 +1,371 @@
+---
+title: "ratPolyA enrichMiR exon analysis"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+    html_document:
+        toc: true
+        toc_float: true
+        theme: 'cerulean'
+        highlight: 'tango'
+        code_folding: hide
+        df_print: paged
+---
+  
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+  
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(SummarizedExperiment)
+  library(SEtools)
+  library(ggplot2)
+  library(plgINS)
+  library(edgeR)
+})
+```
+
+## Loading
+
+```{r import, message=FALSE, warning=FALSE, eval=TRUE}
+
+# load splice SE
+se.splicing <- readRDS("data/raw/ratPolyA.splicing.raw.SE.rds")
+```
+
+## Prep
+
+```{r modify, message=FALSE, warning=FALSE, eval=TRUE}
+
+# change names
+colnames(se.splicing) <- sapply(colnames(se.splicing), function(x) rev(unlist(strsplit(x,"\\.")))[2] )
+colnames(se.splicing[,!grepl("Neg",colnames(se.splicing))]) <- paste0("miR.",colnames(se.splicing[,!grepl("Neg",colnames(se.splicing))]))
+
+# modify colData
+se.splicing$rep <- factor(1:4)
+se.splicing$isBatch4 <- factor(grepl("_n4",colnames(se.splicing)))
+se.splicing$miRNA <- factor(sapply(colnames(se.splicing), function(x) unlist(strsplit(x,"\\_"))[1]))
+
+# filter raw data
+filter <- c(10,2)
+se.splicing <- se.splicing[which(rowSums(assay(se.splicing) >= filter[1]) >= filter[2]),]
+```
+
+```{r dea prep function, message=FALSE, warning=FALSE, eval=TRUE}
+
+
+#' DEAprep
+#'
+#' Generates control samples out of the average values over all supplied samples, combines spliced and unspliced
+#' assays and calculates their logCPM & log2FC data. 
+#' All is assembled into one SE object. 
+#' 
+#'
+#' @param se SummarizedExperiment object containing assays of raw counts of spliced & unspliced tx
+#'
+#' @return an SE object of combined spliced and unspliced data as well as control samples generated from averaging over all treatment samples
+#' 
+DEAprep <- function(se, control){
+  
+  # allocation
+  
+  readtype <- list(spliced="spliced",unspliced="unspliced")
+  
+  ## generate DGEList object
+  dds1 <- DGEList(assays(se)$spliced)
+  dds2 <- DGEList(assays(se)$unspliced)
+  
+  ## combine the spliced & unspliced assays
+  dds <- cbind(dds1, dds2)
+
+  
+  # generate colData
+
+  dd1 <- colData(se)[,c("rep","isBatch4","miRNA")]
+  dd1$readtype <- readtype$spliced
+  
+  ## duplicate dd to have data for combined spliced & unspliced assay
+  dd <- rbind(dd1, dd1)
+  dd$readtype[(nrow(dd1)+1):nrow(dd)] <- readtype$unspliced
+  
+  ## rename both dds & dd object features
+  n.cols <- lapply(readtype, function(x) sapply(colnames(se), function(y) paste(y, x, sep=".") ))
+  
+  colnames(dds) <- c(n.cols$spliced, n.cols$unspliced)
+  rownames(dd) <- c(n.cols$spliced, n.cols$unspliced)
+
+  
+  # rebuild SE object
+  
+  ## SE object with logCPM assay
+  se <- SummarizedExperiment(assays=list(counts=dds$counts), 
+                             rowData=rowData(se), 
+                             colData=dd) 
+  assays(se)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se)))))
+
+  return(se)
+}
+```
+
+```{r dea prep, message=FALSE, warning=FALSE, eval=TRUE}
+
+# generate SE object with extrapolated control samples combined spliced & unspliced assays
+se <- DEAprep(se.splicing, control="Neg")
+```
+
+## PCA
+
+```{r pca, message=FALSE, warning=FALSE, eval=TRUE}
+
+# plot PCA to check for batch effect
+
+## combined
+plgINS::plPCA(assays(se)$logcpm, as.data.frame(colData(se)), colorBy = "rep", shapeBy = "readtype",
+              add.labels = FALSE, annotation_columns = colnames(colData(se))[c(3,4)])
+## spliced
+plgINS::plPCA(assays(se)$logcpm[,se$readtype=="spliced"], as.data.frame(colData(se)), colorBy = "rep",
+              add.labels = FALSE, annotation_columns = colnames(colData(se))[c(3,4)])
+## unspliced
+plgINS::plPCA(assays(se)$logcpm[,se$readtype=="unspliced"], as.data.frame(colData(se)), colorBy = "rep",
+              add.labels = FALSE, annotation_columns = colnames(colData(se))[c(3,4)])
+```
+
+## DEA
+
+```{r exon dea function, message=FALSE, warning=FALSE, eval=TRUE}
+
+#' exonDEA
+#'
+#' @param se SE object containing assays with combined spliced & unspliced counts
+#' @param model function: model matrix function to test
+#' @param model0 function: model matrix function to be tested against
+#' @param control string: name of control samples inside colData() of supplied SE object
+#'
+#' @return SE object containing DEA results over all treatments & over individual ones
+#' 
+exonDEA <- function(se, model, model0=~1, control){
+  
+  ## allocation
+  se$miRNA <- relevel(droplevels(se$miRNA), ref=control)
+  se$readtype <- relevel(factor(se$readtype), ref="unspliced")
+  se$rep <- droplevels(se$rep)
+  dd <- as.data.frame(colData(se))
+  ## normalization
+  dds <- calcNormFactors(DGEList(assays(se)$counts))
+  ## models
+  mm <- model.matrix(model, data=dd)
+  mm0 <- model.matrix(model0, data=dd)
+  testCoeff <- setdiff(colnames(mm), colnames(mm0))
+  ## estimate dispersion
+  dds <- estimateDisp(dds,mm)
+  ## fit negative binomial distribution on counts per gene (use glmFit for few replicates)
+  fit <- glmFit(dds, mm)
+  ## fit a GLM on the data
+  lrt.comb <- glmLRT(fit, testCoeff)
+  ## top genes that change relative to stage 0
+  res.comb <- as.data.frame(topTags(lrt.comb, Inf))
+  ## fit linear model dropping one sample at a time (using multiple cores)
+  res.list <- bplapply( testCoeff, BPPARAM=MulticoreParam(8), FUN=function(x){
+    as.data.frame(topTags(glmLRT(fit, x),Inf))
+  })
+  dea.names <- gsub("readtype","", testCoeff)
+  dea.names <- make.names(gsub("?miRNA",".", dea.names))
+  colnames(res.comb)[grepl("logFC",colnames(res.comb))] <- paste0("logFC.", dea.names)
+  names(res.list) <- paste0("DEA.",dea.names)
+  
+  ## add DEAs
+  rowData(se)$DEA.spliced.all <- DataFrame(res.comb[rownames(se),])
+  for(i in paste0("DEA.",dea.names)){
+    rowData(se)[[i]] <- DataFrame(res.list[[i]][rownames(se),])
+  }
+
+  ## add logFC assay
+  se <- plgINS::svacor(se, form = model, form0 = model0)
+  se <- SEtools::log2FC(se, controls = se$miRNA==control, by = se$readtype, fromAssay = "corrected", isLog = TRUE)
+  
+  return(se)
+}
+```
+
+```{r exon dea comb, message=FALSE, warning=FALSE, results='hide', eval=TRUE}
+
+# ratPolyA DEA with exon resolution
+## combined readtype:miRNA effect
+se.comb <- exonDEA(se, model = ~readtype*miRNA, model0 = ~readtype+miRNA, control="Neg")
+```
+
+```{r exon dea batch, message=FALSE, warning=FALSE, results='hide', eval=TRUE}
+
+# ratPolyA DEA with exon resolution
+# batch effect included
+se.batch <- exonDEA(se, model = ~rep+readtype*miRNA, model0 = ~rep+readtype+miRNA, control="Neg")
+```
+
+```{r exon dea batch4, message=FALSE, warning=FALSE, results='hide', eval=TRUE}
+
+# ratPolyA DEA with exon resolution
+# batch 4 effect included
+se.batch4 <- exonDEA(se, model = ~isBatch4+readtype*miRNA, model0 = ~isBatch4+readtype+miRNA, control="Neg")
+```
+
+```{r exon dea significants, message=FALSE, warning=FALSE, eval=TRUE}
+
+# number of significant tx
+
+## combined [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+sapply(rowData(se.comb)[,grepl("DEA",colnames(rowData(se.comb)))], function(x) sum(x$FDR < .05) )
+
+## batch [model = ~rep+readtype*miRNA, model0 = ~rep+readtype+miRNA]
+sapply(rowData(se.batch)[,grepl("DEA",colnames(rowData(se.batch)))], function(x) sum(x$FDR < .05) )
+
+## batch4 [~isBatch4+readtype*miRNA, model0 = ~isBatch4+readtype+miRNA]
+sapply(rowData(se.batch4)[,grepl("DEA",colnames(rowData(se.batch4)))], function(x) sum(x$FDR < .05) )
+```
+
+
+## Plots
+
+```{r heatmap allocation, message=FALSE, warning=FALSE, eval=TRUE}
+
+# allocation
+sig.lvl <- c(.05,.1,.5,.8)
+```
+
+```{r heatmap function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# heatmap function
+
+makeHM <- function(se, sig, nr=20, logcpm=FALSE){
+  for(i in sig){
+    if(sum(rowData(se)$DEA.spliced.all$FDR < i) > nr){
+      cat("FDR <", i, "\n")
+      # logFC heatmap
+      SEtools::sehm(se[,order(colData(se)$miRNA)], row.names(se)[rowData(se)$DEA.spliced.all$FDR < i], gaps_at = "readtype",
+                breaks=TRUE, do.scale = FALSE, show_colnames = FALSE, assayName = "log2FC", anno_columns = c("miRNA","readtype"))
+      # logcpm heatmap
+      se.sp <- se[,colData(se)$readtype=="spliced"]
+      if(logcpm){
+        SEtools::sehm(se.sp[,order(colData(se.sp)$miRNA)], row.names(se.sp)[rowData(se.sp)$DEA.spliced.all$FDR < i], gaps_at = "readtype",
+                breaks=TRUE, do.scale = TRUE, show_colnames = FALSE, assayName = "logcpm", anno_columns = c("miRNA","readtype"))
+      }
+      break
+    }
+  }
+}
+```
+
+```{r heatmap, message=FALSE, warning=FALSE, fig.width=12, fig.height=7, eval=TRUE}
+
+# combined [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+makeHM(se.comb, sig.lvl, nr=2)
+
+# batch [model = ~rep+readtype*miRNA, model0 = ~rep+readtype+miRNA]
+makeHM(se.batch, sig.lvl, nr=2)
+
+# batch4 [~isBatch4+readtype*miRNA, model0 = ~isBatch4+readtype+miRNA]
+makeHM(se.batch4, sig.lvl, nr=2)
+```
+
+```{r MA plot, message=FALSE, warning=FALSE, eval=TRUE}
+
+# logCPM vs logFC scatterplot
+LSD:::heatscatter(as.vector(assays(se.comb)$logcpm),as.vector(assays(se.comb)$log2FC))
+abline(a=0, b=0)
+```
+
+## Stats
+
+### ratios
+
+```{r spliced ratios, message=FALSE, warning=FALSE, eval=TRUE}
+
+# spliced v unspliced
+lib.spliced <- apply(assays(se.comb[,colData(se.comb)$readtype=="spliced"])$counts, 2, function(x) sum(x))
+lib.unspliced <- apply(assays(se.comb[,colData(se.comb)$readtype=="unspliced"])$counts, 2, function(x) sum(x))
+
+median(lib.unspliced / lib.spliced)
+```
+
+### up-/downregulations at different significance levels
+
+```{r significance signs function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# check number of positive & negative logFC for different significances
+
+sigsDF <- function(se, sig, dea, thr){
+  data.frame(sigLevel=rep(sig,3),
+             counts=c(sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == -1 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr)),
+                      sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == 0 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr)),
+                      sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == 1 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr))
+                      ),
+             sign=c(rep("-1",length(sig)),
+                    rep("0",length(sig)),
+                    rep("1",length(sig))
+                    ),
+             dea=rep(dea,length(sig)*3)
+             )
+}
+```
+
+```{r significance signs, message=FALSE, warning=FALSE, eval=TRUE}
+
+# for each model & DEA: find number of down- & upregulations at different significance levels
+
+## significance levels of interest
+sig <- c(1e-10, 1e-5, .05, .1, .5, .8)
+## only absolute log2FC greater than this will be considered
+fc.thr <- .5
+
+## create dataframes with count informations
+### [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+sigs <- lapply(grep("DEA",colnames(rowData(se.comb)),value=TRUE), function(x){
+  sigsDF(se.comb, sig, x, fc.thr)
+})
+sigs <- data.frame(do.call("rbind",sigs))
+
+### [model = ~rep+readtype*miRNA, model0 = ~rep+readtype+miRNA]
+sigs.batch <- lapply(grep("DEA",colnames(rowData(se.batch)),value=TRUE), function(x){
+  sigsDF(se.batch, sig, x, fc.thr)
+})
+sigs.batch <- data.frame(do.call("rbind",sigs.batch))
+
+### [model = ~isBatch4+readtype*miRNA, model0 = ~isBatch4+readtype+miRNA]
+sigs.batch4 <- lapply(grep("DEA",colnames(rowData(se.batch4)),value=TRUE), function(x){
+  sigsDF(se.batch4, sig, x, fc.thr)
+})
+sigs.batch4 <- data.frame(do.call("rbind",sigs.batch4))
+```
+
+```{r significance signs plot, message=FALSE, warning=FALSE, fig.width=12, eval=TRUE}
+
+### [model = ~readtype*miRNA, model0 = ~readtype+miRNA]
+ggplot(sigs, aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea) + geom_hline(yintercept=20, color="red", show.legend = "20")
+### [model = ~rep+readtype*miRNA, model0 = ~rep+readtype+miRNA]
+ggplot(sigs.batch, aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea) + geom_hline(yintercept=20, color="red", show.legend = "20")
+### [model = ~isBatch4+readtype*miRNA, model0 = ~isBatch4+readtype+miRNA]
+ggplot(sigs.batch4, aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea) + geom_hline(yintercept=20, color="red", show.legend = "20")
+```
+
+## Export
+
+```{r dea export, warning=FALSE, message=FALSE, eval=TRUE}
+
+# round
+source("functions/roundSE.R")
+se.batch4 <- roundSE(se.batch4)
+# export
+saveRDS(se.batch4, "data/ratPolyA.exon.DEA.SE.rds")
+```
+
+
