@@ -308,9 +308,6 @@ getEnrichMiR <- function(dea.names, TS, TP, props, rownames.se, tests, dea.list,
   ### add original to proportion vector
   props.all <- c(original="original", props)
   
-  ### load enrichMiR package
-  devtools::load_all("/mnt/schratt/tgermade_test/master_19_20/enrichMiR/enrichMiR/")
-  
   ### enrichMiR
   #### serial run
   e.list <- lapply(dea.names, FUN=function(i){
@@ -413,6 +410,9 @@ tests <- NULL
 e.list <- list()
 ## initiate dataframe summary of results
 df.list <- list()
+### load enrichMiR package
+devtools::load_all("/mnt/schratt/tgermade_test/master_19_20/enrichMiR/enrichMiR/")
+
 
 ## enrichMiR loop
 for( i in datasets ){

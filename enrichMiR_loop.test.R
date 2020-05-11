@@ -308,9 +308,6 @@ getEnrichMiR <- function(dea.names, TS, TP, props, rownames.se, tests, dea.list,
   ### add original to proportion vector
   props.all <- c(original="original", props)
   
-  ### load enrichMiR package
-  devtools::load_all("/mnt/schratt/tgermade_test/master_19_20/enrichMiR/enrichMiR/")
-  
   ### enrichMiR
   #### serial run
   e.list <- lapply(dea.names, FUN=function(i){
@@ -325,36 +322,36 @@ getEnrichMiR <- function(dea.names, TS, TP, props, rownames.se, tests, dea.list,
     names(e.list[[i]]) <- names(props.all)
   }
   
-  ### combine michael, wEN and modScore results
-  #### fisher aggregation
-  for(i in names(e.list)){ 
-    for(j in names(e.list[[i]])){
-      comb <- testCombine.fisher(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$wEN.down, e.list[[i]][[j]]@res$modScore, c("over.pvalue","over.pvalue","pvalue"))
-      e.list[[i]][[j]]@res$combFish.1 <- comb
-    }
-  }
-  #### geometric mean
-  for(i in names(e.list)){ 
-    for(j in names(e.list[[i]])){
-      comb <- testCombine.geom(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$wEN.down, e.list[[i]][[j]]@res$modScore, c("over.pvalue","over.pvalue","pvalue"))
-      e.list[[i]][[j]]@res$combGeom.1 <- comb
-    }
-  }
-  ### combine michael, aREAmir and KS2 results
-  #### fisher aggregation
-  for(i in names(e.list)){ 
-    for(j in names(e.list[[i]])){
-      comb <- testCombine.fisher(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$aREAmir, e.list[[i]][[j]]@res$KS2, c("over.pvalue","pvalue","ks.pvalue.down"))
-      e.list[[i]][[j]]@res$combFish.2 <- comb
-    }
-  }
-  #### geometric mean
-  for(i in names(e.list)){ 
-    for(j in names(e.list[[i]])){
-      comb <- testCombine.geom(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$aREAmir, e.list[[i]][[j]]@res$KS2, c("over.pvalue","pvalue","ks.pvalue.down"))
-      e.list[[i]][[j]]@res$combGeom.2 <- comb
-    }
-  }
+  # ### combine michael, wEN and modScore results
+  # #### fisher aggregation
+  # for(i in names(e.list)){ 
+  #   for(j in names(e.list[[i]])){
+  #     comb <- testCombine.fisher(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$wEN.down, e.list[[i]][[j]]@res$modScore, c("over.pvalue","over.pvalue","pvalue"))
+  #     e.list[[i]][[j]]@res$combFish.1 <- comb
+  #   }
+  # }
+  # #### geometric mean
+  # for(i in names(e.list)){ 
+  #   for(j in names(e.list[[i]])){
+  #     comb <- testCombine.geom(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$wEN.down, e.list[[i]][[j]]@res$modScore, c("over.pvalue","over.pvalue","pvalue"))
+  #     e.list[[i]][[j]]@res$combGeom.1 <- comb
+  #   }
+  # }
+  # ### combine michael, aREAmir and KS2 results
+  # #### fisher aggregation
+  # for(i in names(e.list)){ 
+  #   for(j in names(e.list[[i]])){
+  #     comb <- testCombine.fisher(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$aREAmir, e.list[[i]][[j]]@res$KS2, c("over.pvalue","pvalue","ks.pvalue.down"))
+  #     e.list[[i]][[j]]@res$combFish.2 <- comb
+  #   }
+  # }
+  # #### geometric mean
+  # for(i in names(e.list)){ 
+  #   for(j in names(e.list[[i]])){
+  #     comb <- testCombine.geom(e.list[[i]][[j]]@res$michael.down, e.list[[i]][[j]]@res$aREAmir, e.list[[i]][[j]]@res$KS2, c("over.pvalue","pvalue","ks.pvalue.down"))
+  #     e.list[[i]][[j]]@res$combGeom.2 <- comb
+  #   }
+  # }
   
   return(e.list)
 }
@@ -399,7 +396,7 @@ getDF <- function(dea.names, e.list, TP){
 
 
 ## datasets to loop over
-datasets <- c("bartel","jeong","ratPolyA")
+datasets <- "jeong"
 ## cores
 cores <- 8
 ## set number of replicates per permutation proportion
@@ -409,11 +406,16 @@ props <- unlist(lapply( c("20"=0.2, "30"=0.3, "40"=0.4, "50"=0.5),
                         FUN=function(x) lapply(i, FUN=function(y) x)))
 props <- c("20"=0.2)
 ## which enrichMiR tests to run (NULL for all)
-tests <- c("michael","wo","modscore","areamir","ks2")
+tests <- "regmirb"
 ## initiate enrichMiR results
 e.list <- list()
 ## initiate dataframe summary of results
 df.list <- list()
+### load enrichMiR package
+devtools::load_all("/mnt/schratt/tgermade_test/master_19_20/enrichMiR/enrichMiR/")
+#devtools::load_all("/mnt/schratt/enrichMiR/")
+
+
 
 ## enrichMiR loop
 for( i in datasets ){
@@ -501,7 +503,7 @@ for( i in datasets ){
       ### Jeong dataset
       #################
     } else if(i=="jeong"){
-      
+
       se <- readRDS("data/jeong.DEA.SE.rds")
       dea.df.names <- colnames(rowData(se)[,grepl("DEA",colnames(rowData(se)))][-1])
       dea.names <- "miR.221.222"
@@ -593,7 +595,7 @@ for( i in datasets ){
     ## save output
     saveRDS(e.list,"enrichMiR.list.rds")
     saveRDS(df.list,"benchmark_df.list.rds")
-    
+
   }, error=function(e){
     message("Error in ", i)
     print(e)

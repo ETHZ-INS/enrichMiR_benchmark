@@ -8,8 +8,8 @@ output: html_document
 # creating the diluted datasets
 
 ```{r}
-deas <- list( HEK=readRDS("bartel_HEK.deaList.rds"),
-              Hela=readRDS("bartel_HeLa.deaList.rds") )
+deas <- list( HEK=readRDS("data/bartel_HEK.deaList.rds"),
+              Hela=readRDS("data/bartel_HeLa.deaList.rds") )
 deas <- unlist(deas, recursive = FALSE)
 
 names(i) <- i <- 1:5
