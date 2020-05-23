@@ -1,0 +1,119 @@
+---
+title: "Benchmark results exploration"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: 'cerulean'
+    highlight: 'tango'
+    df_print: paged
+---
+  
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+  
+```{r}
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(cowplot)
+  library(reshape2)
+  library(pheatmap)
+})
+theme_set(theme_cowplot())
+```
+
+```{r}
+e <- readRDS("combined.benchmark.rds")
+# we get rid of tests in the wrong direction with respect to intervention:
+e <- e[ (e$design=="transfection" & !grepl("\\.up",e$method)) | 
+          (e$design!="transfection" & grepl("\\.up",e$method)), ]
+e$method <- gsub("\\.down|\\.up","",e$method)
+e$TP.atFDR05 <- as.numeric(e$TP.atFDR05)-1
+e$detPPV[is.na(e$detPPV)] <- 0
+# we first check the 'standard' procedure
+e1 <- e[e$mirexpr=="no_mirexpr" & e$exon.specific=="unseparated",]
+```
+
+## General overview of the datasets
+
+```{r, fig.width=10, fig.height=9}
+ggplot(e1, aes(prop, TP.atFDR05, fill=dataset)) + geom_boxplot() + facet_wrap(~dataset+seed)
+```
+
+```{r}
+mh <- function(e, metric="TP.atFDR05", form=method~prop, fn=mean, cluster_cols=FALSE, ...){
+  m <- reshape2::dcast(e, form, value.var=metric, na.rm=TRUE, fun.aggregate=fn)
+  row.names(m) <- m[,1]
+  m[,1] <- NULL
+  pheatmap::pheatmap(m, main=metric, cluster_cols=cluster_cols, ...)
+}
+mh(e1)
+mh(e1, "detPPV")
+mh(e1, "FP.atFDR05")
+mh(e1[e1$dataset!="bartel",])
+mh(e1[e1$dataset=="bartel",], "detPPV")
+```
+
+
+## Effect of mirexpr
+
+```{r}
+eme <- e[e$mirexpr=="mirexpr" & e$exon.specific=="unseparated",]
+row.names(eme) <- paste(eme$dataset,eme$seed,eme$prop.rep,eme$method)
+e1b <- e1[e1$treatment %in% eme$treatment,]
+row.names(e1b) <- paste(e1b$dataset,e1b$seed,e1b$prop.rep,e1b$method)
+eme <- eme[row.names(e1b),]
+eme$TP.diff <- eme$TP.atFDR05-e1b$TP.atFDR05
+eme$detPPV.diff <- eme$detPPV-e1b$detPPV
+table(eme$TP.diff, eme$dataset)
+```
+
+In the vast majority of cases, restricting the miRNAs to the expressed ones increased sensitivity. Those cases where it resulted in a decrease in sensitivity tend to appear in more often in the miR.499vNeg dataset, and with the regmir methods:
+
+```{r}
+table(eme$TP.diff, eme$treatment)["-1",]
+table(eme$TP.diff, eme$method)["-1",]
+```
+
+Next we can check the effect of mirexpr on the PPV at the detection rate:
+
+```{r}
+hist(eme$detPPV.diff[eme$detPPV.diff!=0], breaks=20, xlab="Difference in PPV (where non-null)", main="Effect of mirexpr on detPPV")
+ggplot(eme, aes(method, detPPV.diff)) + geom_violin() + coord_flip()
+```
+
+In general, mirexpr tended to (if it had any effect) increase PPV, and was never negative when using certain tests or wwhen combining multiple tests.
+
+
+## Effect of spliced-specific analysis
+
+```{r}
+ex <- e[e$mirexpr=="no_mirexpr" & e$exon.specific=="exonic",]
+ex <- ex[!duplicated(paste(ex$dataset, ex$seed,ex$prop.rep,ex$method)),] # some results (e.g. cherone 138DKO) appear in double
+row.names(ex) <- paste(ex$dataset, ex$seed,ex$prop.rep,ex$method)
+e1b <- e1[e1$treatment %in% ex$treatment,]
+row.names(e1b) <- paste(e1b$dataset,e1b$seed,e1b$prop.rep,e1b$method)
+ex <- ex[row.names(e1b),]
+ex$TP.diff <- ex$TP.atFDR05-e1b$TP.atFDR05
+ex$detPPV.diff <- ex$detPPV-e1b$detPPV
+table(ex$TP.diff, ex$dataset)
+```
+
+Splicing-specific analysis appears to have had a negative impact pn sensitivity in the Bartel datasets, although in some cases it increased it, specifically in the regressions on logFCs:
+
+```{r}
+table(ex$TP.diff, ex$treatment)["1",]
+table(ex$TP.diff, ex$method)
+```
+
+This could be because the exon-specific analysis yields less DEGs, but more meaningful logFCs? Even in those cases, however, it was more often detrimental than beneficial. The detPPV tells a similar story:
+
+```{r}
+hist(ex$detPPV.diff[ex$detPPV.diff!=0], breaks=20, xlab="Difference in PPV (where non-null)", main="Effect of mirexpr on detPPV")
+ggplot(ex, aes(method, detPPV.diff)) + geom_violin() + coord_flip()
+```
+
+It would be interesting, however, to see this in the other datasets: since the Bartel experiments were meant to capture direct effects (and were possibly profiled before the downstream wave of transcriptional reaction to the direct miRNA effects), it might be that nothing is gained by looking at the exon-specific analysis there, but that something is gained in other datasets...
