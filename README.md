@@ -6,7 +6,7 @@ This repository contains scripts and files involved in benchmarking the enrichMi
 `processing/ * .STAR.sh`  
 `processing/ * .datagen.raw.SE.sh`
 
-- [scripts for DEA:]()  
+- scripts for DEA:  
 `* .datagen.DEA.SE.Rmd`  
 
 - [SE datasets:](data/)  
