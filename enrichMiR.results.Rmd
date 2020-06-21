@@ -3,12 +3,14 @@ title: "enrichMiR benchmark results"
 author: "tgermade"
 date: "`r Sys.Date()`"
 output:
-    html_document:
-        toc: true
-        toc_float: true
-        theme: 'cerulean'
-        highlight: 'tango'
-        df_print: paged
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
 ---
 
 <style>
@@ -34,63 +36,1266 @@ suppressPackageStartupMessages({
   library(cowplot)
   library(matrixStats)
   library(RUVSeq)
+  library(ggrepel)
+  library(grid)
+  library(ComplexHeatmap)
 })
 ```
 
-## Allocation
+# Allocation
 
 ```{r allocation}
 
-# input file: Bartel DEA SE
+filedir <- "/mnt/schratt/tgermade_test/master_19_20/enrichMiR_benchmark/results3/"
+
+# input files: Bartel DEA SE
 input <- list(
-  hek="/mnt/schratt/enrichMiR_benchmark/results/bartel.hek.benchmark.rds",
-  hek.exon="/mnt/schratt/enrichMiR_benchmark/results/bartel.hek.exon.benchmark.rds",
-  hela="/mnt/schratt/enrichMiR_benchmark/results/bartel.hela.benchmark.rds",
-  hela.exon="/mnt/schratt/enrichMiR_benchmark/results/bartel.hela.exon.benchmark.rds",
-  jeong="/mnt/schratt/enrichMiR_benchmark/results/jeong.benchmark.rds",
-  jeong.exon="/mnt/schratt/enrichMiR_benchmark/results/jeong.exon.benchmark.rds",
-  rat="/mnt/schratt/enrichMiR_benchmark/results/ratPolyA.benchmark.rds",
-  rat.exon="/mnt/schratt/enrichMiR_benchmark/results/ratPolyA.exon.benchmark.rds")
+  bartel.hek=paste0(filedir, "bartel.hek.benchmark.rds"),
+  bartel.hek.exon=paste0(filedir, "bartel.hek.exon.benchmark.rds"),
+  bartel.hela=paste0(filedir, "bartel.hela.benchmark.rds"),
+  bartel.hela.exon=paste0(filedir, "bartel.hela.exon.benchmark.rds"),
+  jeong=paste0(filedir, "jeong.benchmark.rds"),
+  jeong.exon=paste0(filedir, "jeong.exon.benchmark.rds"),
+  rat=paste0(filedir, "ratPolyA.benchmark.rds"),
+  rat.exon=paste0(filedir, "ratPolyA.exon.benchmark.rds"),
+  
+  bartel.hek.mirexpr=paste0(filedir, "bartel.hek.mirexpr.benchmark.rds"),
+  bartel.hek.exon.mirexpr=paste0(filedir, "bartel.hek.exon.mirexpr.benchmark.rds"),
+  bartel.hela.mirexpr=paste0(filedir, "bartel.hela.mirexpr.benchmark.rds"),
+  bartel.hela.exon.mirexpr=paste0(filedir, "bartel.hela.exon.mirexpr.benchmark.rds"),
+  rat.mirexpr=paste0(filedir, "ratPolyA.mirexpr.benchmark.rds"),
+  rat.exon.mirexpr=paste0(filedir, "ratPolyA.exon.mirexpr.benchmark.rds"),
+  
+  amin=paste0(filedir, "amin.benchmark.rds"),
+  amin.exon=paste0(filedir, "amin.exon.benchmark.rds"),
+  cherone.d0=paste0(filedir, "cherone.d0.benchmark.rds"),
+  cherone.d0.exon=paste0(filedir, "cherone.d0.exon.benchmark.rds"),
+  cherone.d1=paste0(filedir, "cherone.d1.benchmark.rds"),
+  cherone.d1.exon=paste0(filedir, "cherone.d1.exon.benchmark.rds"),
+  
+  amin.mirexpr=paste0(filedir, "amin.mirexpr.benchmark.rds"),
+  amin.exon.mirexpr=paste0(filedir, "amin.exon.mirexpr.benchmark.rds"),
+  cherone.d0.mirexpr=paste0(filedir, "cherone.d0.mirexpr.benchmark2.rds"),
+  cherone.d0.exon.mirexpr=paste0(filedir, "cherone.d0.exon.mirexpr.benchmark2.rds"),
+  cherone.d1.mirexpr=paste0(filedir, "cherone.d1.mirexpr.benchmark2.rds"),
+  cherone.d1.exon.mirexpr=paste0(filedir, "cherone.d1.exon.mirexpr.benchmark2.rds")
+  )
+
+TPs <- c( 
+  let.7a = "GAGGUAG", lsy.6 = "UUUGUAU", miR.1 = "GGAAUGU", miR.124 = "AAGGCAC", 
+  miR.137 = "UAUUGCU", miR.139 = "CUACAGU", miR.143 = "GAGAUGA", 
+  miR.144 = "ACAGUAU", miR.153 = "UGCAUAG", miR.155 = "UAAUGCU", 
+  miR.182 = "UUGGCAA", miR.199a = "CCAGUGU", miR.204 = "UCCCUUU", 
+  miR.205 = "CCUUCAU", miR.216b = "AAUCUCU", miR.223 = "GUCAGUU", 
+  miR.7 = "GGAAGAC", miR.122 = "GGAGUGU", miR.133 = "UGGUCCC", 
+  miR.138 = "GCUGGUG", miR.145 = "UCCAGUU", miR.184 = "GGACGGA", 
+  miR.190a = "GAUAUGU", miR.200b = "AAUACUG", miR.216a = "AAUCUCA", 
+  miR.217 = "ACUGCAU", miR.219a = "GAUUGUC", miR.375 = "UUGUUCG", 
+  miR.451a = "AACCGUU", "DKOvWT"="GCUACAU", "DKO"="GCUACAU", 
+  "miR.138vNeg"="GCUGGUG", "miR.499vNeg"="UAAGACU", "miR.499"="UAAGACU", 
+  "218DKOvWT"="UGUGCUU", "218DKO"="UGUGCUU",
+  "138DKOvWT"="CUAUUUC", "138DKO"="CUAUUUC"
+  )
 ```
 
-## Loading
+# Loading
 
-```{r load}
+```{r tp}
 
 # import dataframes
-test <- lapply(input,readRDS)
+df.list <- lapply(input,readRDS)
+```
+
+# Prep
+
+```{r, eval=T}
+
 # combine dataframes
-test2 <- do.call("rbind", test)
-test2$dataset <- sapply(strsplit(rownames(test2),"\\."), function(x) paste(rev(rev(x)[-1]),collapse="."))
+df <- do.call("rbind", df.list)
+# add information
+df$sample <- sapply(strsplit(rownames(df),"\\."), function(x) paste(rev(rev(x)[-1]),collapse="."))
+df$dataset <- sapply(strsplit(df$sample,"\\."), function(x) x[1])
+df$organism <- sapply(df$dataset, function(x){
+  if(x=="bartel" | x=="jeong") "human"
+  else if(x=="rat") "rat"
+  else if(x=="amin" | x=="cherone" | x=="whipple") "mouse"
+})
+df$celltype <- sapply(df$sample, function(x){
+  if(grepl("hek",x)) "HEK293"
+  else if(grepl("hela",x)) "HeLa"
+  else if(grepl("jeong",x)) "SNU-638"
+  else if(grepl("rat",x)) "hippocampal_neurons/glia"
+  else if(grepl("in",x)) "induced_neurons"
+  else if(grepl("esc",x)) "ESC"
+  else if(grepl("amin",x)) "motoneurons"
+  else if(grepl("cherone",x)) "CAD"
+})
+df$miRNA <- sapply(1:nrow(df), function(i){
+  if(df$dataset[i]=="bartel") df$treatment[i]
+  else if(df$dataset[i]=="rat" & grepl("miR.138",df$treatment[i])) "miR.138"
+  else if(df$dataset[i]=="rat" & grepl("miR.499",df$treatment[i])) "miR.499"
+  else if(df$dataset[i]=="jeong") "miR.221/miR.222"
+  else if(df$dataset[i]=="amin") "miR.218"
+  else if(df$dataset[i]=="cherone") "miR.138"
+})
+df$seed <- sapply(df$treatment, function(x) TPs[x])
+df$design <- factor( sapply(df$dataset, function(x){
+  if(x=="bartel" | x=="rat") "transfection"
+  else if(x=="jeong" | x=="amin" | x=="cherone" | x=="whipple") "KO"
+  }), levels=c("transfection","KO") )
+df$exon.specific <- factor( sapply(df$sample, function(x) if(grepl("exon",x)) "exonic" else "unseparated"), levels=c("unseparated","exonic") )
+df$mirexpr <- factor( sapply(df$sample, function(x) if(grepl("mirexpr",x)) "mirexpr" else "no_mirexpr"), levels=c("no_mirexpr","mirexpr") )
+
+# we get rid of tests in the wrong direction with respect to intervention (mistake in amin dataset):
+df <- df[ (df$design=="transfection" & !grepl("\\.up",df$method)) | 
+          (df$design!="transfection" & df$dataset!="amin" & !grepl("\\.down",df$method)) |
+          (df$dataset=="amin" & !grepl("\\.up",df$method)), ]
+df$method <- gsub("\\.down|\\.up","",df$method)
+# get rid of NAs in detPPV
+df$detPPV[is.na(df$detPPV)] <- 0
+
+# correct some treatment names
+for(x in c("bartel","rat","cherone")){
+  df$treatment[df$dataset==x & df$miRNA=="miR.138"] <- paste0("miR.138.",x)
+}
+df$treatment[df$dataset=="jeong"] <- "miR.221/miR.222"
+df$treatment[df$treatment=="miR.499vNeg"] <- "miR.499"
+df$treatment[df$treatment %in% c("218DKOvWT","218DKO")] <- "miR.218"
+
+# mark bartel dataset
+for(x in unique(df$dataset)){
+  if(x=="bartel") df$is.bartel[df$dataset==x] <- "bartel" 
+  else df$is.bartel[df$dataset==x] <- "other"
+}
+
+# remove lsy.6 bartel
+df <- df[df$treatment!="lsy.6",]
+
+# convert columns to factors
+for(x in colnames(df)[-which(colnames(df) %in% c("detPPV","FP.atFDR05","log10QDiff","log10QrelIncrease","TP.atFDR05"))]){
+  df[[x]] <- as.factor(df[[x]])
+}
+
+# variables
+#dea.names <- as.character(unique(df$treatment))
+#props.all <- levels(df$prop)
+```
+
+```{r export df, eval=T}
+
+# export df
+saveRDS(df, "results3/combined.benchmark.rds")
+```
+
+```{r import df, eval=F}
+
+df <- readRDS("results3/combined.benchmark.rds")
 ```
 
 ```{r}
 
-test <- split(df.all, df.all$dataset)
-df <- test$bartel.hek
-dea.names <- as.character(unique(df$treatment))
-props.all <- levels(df$prop)
+# dataframe subsets
+df.std <- df[df$mirexpr=="no_mirexpr" & df$exon.specific=="unseparated",]
+df.mir <- df[df$mirexpr=="mirexpr" & df$exon.specific=="unseparated",]
+df.ex <- df[df$mirexpr=="no_mirexpr" & df$exon.specific=="exonic",]
 ```
 
 # Plots
 
-```{r plot scores, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=6}
+```{r}
+
+# color palette dataset
+newCols <- colorRampPalette(grDevices::hcl.colors(length(unique(df$dataset)),palette = hcl.pals()[107]))
+cols.data <- newCols(length(unique(df$dataset)))
+names(cols.data) <- levels(df$dataset)
+# color palette method
+set.seed(111)
+colourCount = length(levels(df$method))
+getPalette = colorRampPalette(brewer.pal(9, "Set1")[-6])
+cols.method <- structure(sample(getPalette(colourCount)), names=levels(df$method))
+# color palette design
+cols.design <- structure(cols.method[c(4,5)], names=levels(df$design))
+# color palette mirexpr
+cols.mir <- structure(cols.design, names=levels(df$mirexpr))
+# color palette exon.specific
+cols.ex <- structure(cols.design, names=levels(df$exon.specific))
+
+colors <- list(dataset=cols.data, 
+               method=cols.method, 
+               design=cols.design,
+               mir=cols.mir, 
+               ex=cols.ex)
+```
+
+## Data Overview
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=5, fig.height=8}
+
+df.sub <- do.call("rbind", lapply(unique(df$treatment), function(x) df[df$treatment==x,][1,]))
+ggplot(df.sub, aes(x=design, fill=dataset)) + geom_bar(position="stack") + 
+  theme_cowplot() +
+  #scale_color_brewer(palette="maroon")
+  scale_fill_manual(values = colors$dataset)
+```
+
+Most samples come from Bartel. Here shown: nr of samples per dataset.   
+
+## Test robustness to noise
+
+### VERSION 1:  
+
+```{r, echo = T, results = 'hide'}
+# mh <- function(df, metric="TP.atFDR05", form=method~prop, fn=mean, cluster_cols=FALSE, ...){
+#   m <- reshape2::dcast(df, form, value.var=metric, na.rm=TRUE, fun.aggregate=fn)
+#   row.names(m) <- m[,1]
+#   m[,1] <- NULL
+#   pheatmap::pheatmap(m, cluster_cols=cluster_cols, cluster_rows = FALSE, breaks = seq(0.1,1,length.out = 101), ...)
+# }
+# 
+# p1 <- mh(df.std[df.std$dataset!="bartel",], "detPPV", legend=FALSE, main="other", show_rownames=FALSE)$gtable
+# p2 <- mh(df.std[df.std$dataset=="bartel",], "detPPV", main="bartel")$gtable
+# 
+# gridExtra::grid.arrange(gridExtra::arrangeGrob(grobs=list(p1,p2),ncol=2, widths=c(5,6) ), 
+#                        top=grid::textGrob("detPPV scores \n", gp=grid::gpar(fontsize=18, fontface="bold")) )
+```
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=10, fig.height=8}
+
+# create heatmap matrix
+MHv1 <- function(df, metric="detPPV", form=method+is.bartel~prop, fn=mean, data.annotate=FALSE, name=name, ...){
+  # reshape data
+  m2 <- reshape2::dcast(df, form=form, value.var=metric, na.rm=TRUE, fun.aggregate=fn)
+  # generate matrix & annotations
+  l <- split(m2,m2$is.bartel)
+  m3 <- cbind(l$other[,-2],l$bartel[,-c(1:2)])
+  rownames(m3) <- m3[,1]
+  m3 <- m3[,-1]
+  ds2 <- factor(c(rep("other",4),rep("bartel",4)), levels=c("other","bartel"))
+  # heatmap
+  hm <- ComplexHeatmap::Heatmap(m3, name=name, cluster_columns=FALSE, rect_gp=gpar(col="white",lwd =.5),
+                               column_split=ds2, 
+                               column_labels=rep(colnames(m3)[1:4],2), 
+                               column_title_gp=gpar(fontsize=12), column_title=levels(ds2),
+                               row_gap=unit(2,"mm"), column_gap=unit(2,"mm"), ...)
+  if(data.annotate){
+    hm2 <- ComplexHeatmap::Heatmap(ds, name="dataset", col=colors$dataset, ...)
+    return(hm2)
+  } else {
+    return(hm)
+  }
+}
+
+# generate color gradient for TP
+hm.col <- circlize::colorRamp2(c(0.2,.6,1),c("#043495","#f4da71","#bd0f0f"), space="RGB")
+# generate heatmaps
+hm1 <- MHv1(df.std, metric="detPPV", name="detPPV", show_row_dend=FALSE, col=hm.col)
+hm1
+```
+
+### VERSION 2:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=8}
+
+metric.all <- c("detPPV","FP.atFDR05","log10QDiff","TP.atFDR05")
+metric <- metric.all[1]
+
+# Score distributions: violin (method & prop)
+p1 <- ggplot(df.std[df.std$method %in% levels(df.std$method)[1:10],], aes(x=prop, y=detPPV, fill=method))  + 
+  geom_violin(draw_quantiles = 0.5) + facet_grid(is.bartel~method) + guides(fill=FALSE) + ylab("detPPV") + xlab("") + theme_cowplot() +
+  theme_cowplot() +
+  theme(axis.line=element_line(colour = "grey"),
+        strip.background=element_rect(colour = "grey"),
+        axis.ticks=element_line(colour = "grey"),
+        strip.text=element_text(size = 10),
+        axis.text = element_text(size = 6)) +
+  scale_fill_manual(values = colors$method[1:10])
+p2 <- ggplot(df.std[df.std$method %in% levels(df.std$method)[11:19],], aes(x=prop, y=detPPV, fill=method))  + 
+  geom_violin(draw_quantiles = 0.5) + facet_grid(is.bartel~method) + guides(fill=FALSE) + ylab("detPPV") + theme_cowplot() +
+  theme_cowplot() +
+  theme(axis.line=element_line(colour = "grey"),
+        strip.background=element_rect(colour = "grey"),
+        axis.ticks=element_line(colour = "grey"),
+        strip.text=element_text(size = 10),
+        axis.text = element_text(size = 6)) +
+  scale_fill_manual(values = colors$method[11:19])
+
+
+ggpubr::ggarrange(p1,p2, ncol=1)
+```
+
+## Dataset difficulty
+
+### VERSION 1:
+
+```{r, echo = T, results = 'hide'}
+# mh <- function(df, metric="TP.atFDR05", form=treatment+dataset~prop, fn=mean, cluster_cols=FALSE, annotate=T, ...){
+#   m <- reshape2::dcast(df, form, value.var=metric, na.rm=TRUE, fun.aggregate=fn)
+#   row.names(m) <- m[,1]
+#   m[,1] <- NULL
+#   if(annotate) ann <- data.frame(dataset=m$dataset, row.names=rownames(m))
+#   else ann <- NULL
+#   m <- m[,-1]
+#   pheatmap::pheatmap(m, cluster_cols=cluster_cols, cluster_rows = TRUE, breaks = seq(0.1,1,length.out = 101), annotation_row = ann, annotation_names_row=FALSE, ...)
+#   #Heatmap(t(m), cluster_columns=cluster_cols, cluster_rows=TRUE, top_annotation = ha, ...)
+# }
+# 
+# p1 <- mh(df.std[df.std$dataset!="bartel",], "detPPV", main="other", annotation_colors = colors, annotate=T, legend=FALSE, annotation_legend=FALSE)$gtable
+# p2 <- mh(df.std[df.std$dataset=="bartel",], "detPPV", main="bartel", annotation_colors = colors)$gtable
+# 
+# 
+# gridExtra::grid.arrange(gridExtra::arrangeGrob(grobs=list(p1,p2),ncol=2, widths=c(5.6,6) ), 
+#                        top=grid::textGrob("detPPV scores \n", gp=grid::gpar(fontsize=18, fontface="bold")) )
+```
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=6, fig.height=8}
+
+# create heatmap matrix
+MHv2 <- function(df, metric="detPPV", form=treatment+dataset+is.bartel~prop, fn=mean, data.annotate=FALSE, name=name, ...){
+  # reshape data
+  m2 <- reshape2::dcast(df, form=form, value.var=metric, na.rm=TRUE, fun.aggregate=fn)
+  # generate matrix & annotations
+  ds <- as.character(m2$dataset)
+  ds.bartel <- as.character(m2$is.bartel)
+  names(ds) <- names(ds.bartel) <- rownames(m2) <- m2[,1]
+  m2 <- m2[,-c(1:3)]
+  # heatmap
+  hm <- ComplexHeatmap::Heatmap(m2, name=name, cluster_columns=FALSE, rect_gp=gpar(col="white",lwd =.5),
+                               column_title_gp=gpar(fontsize=12),
+                               row_split=factor(ds.bartel, levels=c("bartel","other")),
+                               row_gap=unit(2,"mm"), ...)
+  if(data.annotate){
+    hm2 <- ComplexHeatmap::Heatmap(ds, name="dataset", col=colors$dataset, ...)
+    return(hm2)
+  } else {
+    return(hm)
+  }
+}
+
+# generate color gradient for TP
+hm.col <- circlize::colorRamp2(c(.2,.7,1),c("#043495","#f4da71","#bd0f0f"), space="RGB")
+# generate heatmaps
+hm1 <- MHv2(df.std, name="detPPV", show_row_dend=FALSE, col=hm.col)
+hm2 <- MHv2(df.std, data.annotate=TRUE, show_row_names=TRUE, width = unit(5, "mm"))
+# plot
+draw(hm1 + hm2, ht_gap = unit(.2, "cm"), show_row_dend=FALSE)
+```
+
+## (supp) Design sensitivity & selectivity: FP vs TP (method & prop & design)
+
+### VERSION 1:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=8}
+
+# FP-TP plot (at FDR .05)
+
+## get average number of FP & TP at FDR .05 for each combination of permutation & method & mirexpr
+df.agg <- aggregate(df.std[,c("FP.atFDR05","TP.atFDR05")], by=df.std[,c("prop","method","design")], FUN=mean)
+
+library(ggrepel)
+ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+  geom_line() + 
+  guides(color=FALSE) +
+  geom_point(size=3) + 
+  geom_label_repel(data=df.agg %>% filter(prop=="original"), 
+                  aes(label=method), 
+                  force=12, 
+                  segment.color="black",
+                  segment.alpha=.3, 
+                  arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last")
+                  ) +
+  geom_point() +
+  scale_color_manual(values = colors$method) +
+  facet_wrap(~design) + 
+  scale_x_sqrt() +
+  theme_cowplot() +
+  theme(panel.border=element_rect(colour = "grey", fill = NA),
+        panel.grid.major=element_line(colour = "grey"), 
+        axis.line=element_line(colour = "grey"),
+        strip.background=element_rect(colour = "grey"),
+        axis.ticks=element_line(colour = "grey"))
+```
+
+## Dataset sensitivity & selectivity: FP vs TP (method & prop & dataset)
+
+### VERSION 1:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=14, fig.height=12}
+
+# FP-TP plot (at FDR .05)
+
+## get average number of FP & TP at FDR .05 for each combination of permutation & method & mirexpr
+df.agg <- aggregate(df.std[,c("FP.atFDR05","TP.atFDR05")], by=df.std[,c("prop","method","dataset","sample","design")], FUN=mean)
+df.agg$dataset <- as.character(df.agg$dataset)
+df.agg$dataset[df.agg$sample=="bartel.hela"] <- as.character(df.agg$sample[df.agg$sample=="bartel.hela"])
+df.agg$dataset[df.agg$sample=="bartel.hek"] <- as.character(df.agg$sample[df.agg$sample=="bartel.hek"])
+df.agg$dataset <- factor(df.agg$dataset)
+
+library(ggrepel)
+ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+  geom_line() + 
+  guides(color=FALSE) +
+  geom_point(size=3) + 
+  geom_label_repel(data=df.agg %>% filter(prop=="original"), 
+                  aes(label=method), 
+                  force=8, 
+                  size=3,
+                  ylim=c(0,1),
+                  segment.color="black",
+                  segment.alpha=.3, 
+                  arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last")
+                  ) +
+  geom_point() +
+  scale_color_manual(values = colors$method) +
+  facet_wrap(design~dataset) + 
+  scale_x_sqrt() +
+  theme_cowplot() +
+  theme(panel.border=element_rect(colour = "grey", fill = NA),
+        panel.grid.major=element_line(colour = "grey"), 
+        axis.line=element_blank(),
+        strip.background=element_rect(colour = "grey90"),
+        axis.ticks=element_line(colour = "grey"))
+```
+
+### Score distributions: box (method)
+
+#### VERSION 1:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=7}
+
+df.std2 <- df.std
+df.std2$dataset <- as.character(df.std2$dataset)
+df.std2$dataset[df.std2$sample=="bartel.hela"] <- as.character(df.std2$sample[df.std2$sample=="bartel.hela"])
+df.std2$dataset[df.std2$sample=="bartel.hek"] <- as.character(df.std2$sample[df.std2$sample=="bartel.hek"])
+df.std2$dataset <- factor(df.std2$dataset)
+
+# Score distributions: box (method)
+ggplot(df.std2, aes(x=method, y=log10QDiff, fill=method)) + geom_boxplot() +
+  guides(fill=FALSE) + ylab("log10QDiff") + coord_flip() + scale_x_discrete(limits = rev(levels(df$method))) +
+  facet_wrap(design~dataset) + geom_hline(yintercept = 0, linetype = "dotted", size = .5) +
+  theme_cowplot() + theme(axis.line=element_line(colour = "grey"), axis.ticks=element_line(colour = "grey")) +
+  scale_fill_manual(values = colors$method)
+```
+
+#### VERSION 2:
+
+```{r, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=7}
+
+# Score distributions: box (method)
+ggplot(df.std, aes(x=method, y=log10QDiff, fill=design)) + geom_boxplot() +
+  ylab("log10QDiff") + coord_flip() + scale_x_discrete(limits = rev(levels(df$method))) +
+  #ggpubr::stat_compare_means(method="wilcox.test", paired=F, label.y.npc=0.9, vjust=.7, label="p.signif", aes(group=design), hide.ns = F) +
+  theme_cowplot() + scale_fill_manual(values = colors$design) +
+  geom_hline(yintercept = 0, linetype = "dotted", size = .5)
+```
+
+Another score highlighting the lacking results from double-KO datasets Amin, Cherone & Jeong.  
+
+## mirexpr Analysis
+
+### mirexpr Effect: FP vs TP (method & prop & mirexpr)
+
+#### VERSION 1:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=8}
+
+# FP-TP plot (at FDR .05)
+
+## select only datasets that can be compared in terms of mirexpr (not all datasets are run with mirexpr)
+df.sub <- df[df$dataset %in% df$dataset[df$mirexpr=="mirexpr"] & df$exon.specific=="unseparated",]
+
+## get average number of FP & TP at FDR .05 for each combination of permutation & method & mirexpr
+df.agg <- aggregate(df.sub[,c("FP.atFDR05","TP.atFDR05")], by=df.sub[,c("prop","method","mirexpr")], FUN=mean)
+
+library(ggrepel)
+ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+  geom_line() + 
+  guides(color=FALSE) +
+  coord_cartesian(ylim = c(0,1)) +
+  geom_point(size=3) + 
+  geom_label_repel(data=df.agg %>% filter(prop=="original"), 
+                  aes(label=method), 
+                  force=10, 
+                  ylim=c(0,NA),
+                  segment.color="black",
+                  segment.alpha=.3, 
+                  arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last")
+                  ) +
+  geom_point() +
+  scale_color_manual(values = colors$method) +
+  facet_wrap(~mirexpr) + 
+  scale_x_sqrt() +
+  theme_cowplot() +
+  theme(panel.border=element_rect(colour = "grey", fill = NA),
+        panel.grid.major=element_line(colour = "grey"), 
+        axis.line=element_blank(),
+        strip.background=element_rect(colour = "grey"),
+        axis.ticks=element_line(colour = "grey"))
+```
+
+#### VERSION 3:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=14}
+
+# FP-TP plot (at FDR .05)
+
+## select only datasets that can be compared in terms of mirexpr (not all datasets are run with mirexpr)
+df.sub <- df[df$dataset %in% df$dataset[df$mirexpr=="mirexpr"] & df$exon.specific=="unseparated",]
+
+## get average number of FP & TP at FDR .05 for each combination of permutation & method & mirexpr
+#df.agg <- aggregate(df.sub[,c("FP.atFDR05","TP.atFDR05")], by=df.sub[,c("prop","method","mirexpr","dataset","design")], FUN=mean)
+df.agg <- aggregate(df.sub[,c("FP.atFDR05","TP.atFDR05")], by=df.sub[,c("method","mirexpr","dataset","design")], FUN=mean)
+
+ 
+ library(ggrepel)
+# ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+#   geom_line() + 
+#   guides(color=FALSE) +
+#   coord_cartesian(ylim = c(0,1)) +
+#   geom_point(size=3) + 
+#   geom_label_repel(data=df.agg %>% filter(prop=="original"), 
+#                   aes(label=method), 
+#                   force=10, 
+#                   size=3,
+#                   ylim=c(0,1),
+#                   segment.color="black",
+#                   segment.alpha=.3, 
+#                   arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last")
+#                   ) +
+#   geom_point() +
+#   scale_color_manual(values = colors$method) +
+#   facet_grid(design+dataset ~ mirexpr) + 
+#   scale_x_sqrt() +
+#   theme_cowplot() +
+#   theme(panel.border=element_rect(colour = "grey", fill = NA),
+#         panel.grid.major=element_line(colour = "grey"), 
+#         axis.line=element_blank(),
+#         strip.background=element_rect(colour = "grey90"),
+#         axis.ticks=element_line(colour = "grey"))
+
+
+# 
+# ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method)) + 
+#   guides(color=FALSE) +
+#   coord_cartesian(ylim = c(0,1)) +
+#   geom_point(size=2.5) + 
+#   geom_text_repel(data=df.agg, 
+#                   aes(label=method), 
+#                   force=10, 
+#                   size=3.5,
+#                   ylim=c(0,1),
+#                   segment.color="black",
+#                   segment.alpha=.15, 
+#                   arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last"),
+#                   box.padding = unit(0.375, "lines"),
+#                   point.padding = unit(.2, 'lines')
+#                   ) +
+#   geom_point() +
+#   scale_color_manual(values = colors$method) +
+#   facet_grid(design+dataset ~ mirexpr) + 
+#   scale_x_sqrt() +
+#   theme_cowplot() +
+#   theme(panel.border=element_rect(colour = "grey", fill = NA),
+#         panel.grid.major=element_line(colour = "grey"), 
+#         axis.line=element_blank(),
+#         strip.background=element_rect(colour = "grey90"),
+#         axis.ticks=element_line(colour = "grey"))
+
+
+
+ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method)) + 
+  guides() +
+  coord_cartesian(ylim = c(0,1)) +
+  geom_point(size=2.5) + 
+  geom_label_repel(data=subset(df.agg, method %in% c("wEN","EN","michael","regmir","KS2","combGeom.3","aREAmir")), 
+                  aes(label=method), 
+                  force=15, 
+                  size=3.5,
+                  ylim=c(0.05,.9),
+                  segment.color="black",
+                  segment.alpha=.2, 
+                  arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last"),
+                  box.padding = unit(0.5, "lines"),
+                  point.padding = unit(.35, 'lines'),
+                  nudge_x=3.5
+                  ) +
+  geom_point() +
+  scale_color_manual(values = colors$method) +
+  facet_grid(design+dataset ~ mirexpr) + 
+  scale_x_sqrt() +
+  theme_cowplot() +
+  theme(panel.border=element_rect(colour = "grey35", fill = NA),
+        panel.grid.major=element_line(colour = "grey85"), 
+        axis.line=element_blank(),
+        strip.background=element_rect(colour = "grey35"),
+        axis.ticks=element_line(colour = "grey35"))
+```
+
+### mirexpr Effect: box (method)
+
+```{r}
+
+# function to do lin-reg
+getPval <- function(form, df, dset, opt=c("mir","ex")){
+  if(!missing(dset)){
+    pvals <- summary(lm(form, data=subset(df, dataset==dset), na.action=na.exclude))
+  } else {
+    pvals <- summary(lm(form, data=df, na.action=na.exclude))
+  }
+  if(opt=="mir"){
+    p <- pvals$coefficients["mirexprmirexpr","Pr(>|t|)"]
+  } else {
+    p <- pvals$coefficients["exon.specificexonic","Pr(>|t|)"]
+  }
+  #names(p) <- opt
+  if(is.na(p)){
+    return(1)
+  } else if(p<.001){
+    return(formatC(p, format = "e", digits = 2))
+  } else {
+    return(round(p,3))
+  }
+}
+```
+
+```{r, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=7}
+
+# Score distributions: box (method)
+df.mir2 <- df[df$exon.specific=="unseparated" & df$dataset!="jeong",]
+df.mir2$log10QDiff[is.infinite(df.mir2$log10QDiff)] <- NA
+df.mir2$mirexpr <- relevel(droplevels(df.mir2$mirexpr), ref="no_mirexpr")
+
+df.mir2$dataset <- as.character(df.mir2$dataset)
+df.mir2$dataset[grepl("bartel.hela",df.mir2$sample)] <- as.character(df.mir2$sample[df.mir2$sample=="bartel.hela"])
+df.mir2$dataset[grepl("bartel.hek",df.mir2$sample)] <- as.character(df.mir2$sample[df.mir2$sample=="bartel.hek"])
+df.mir2$dataset <- factor(df.mir2$dataset)
+
+ggplot(df.mir2, aes(x=method, y=log10QDiff, fill=mirexpr)) + geom_boxplot() +
+  ylab("log10QDiff") + coord_flip() + scale_x_discrete(limits = rev(levels(df$method))) +
+  scale_fill_manual(values = colors$mir) + geom_hline(yintercept=0, linetype="dotted", size=0.5) +
+  #ggpubr::stat_compare_means(method="t.test", paired = TRUE, label.y.npc=.95, vjust=.7, label="p.signif", aes(group = mirexpr), hide.ns = F) +
+  theme_cowplot() + facet_wrap(design~dataset) +
+  theme(axis.line=element_line(colour = "grey35"),
+        strip.background=element_rect(colour = "grey35"),
+        axis.ticks=element_line(colour = "grey35"))
+
+
+# get pvalues per dataset
+p.values <- sapply(as.character(unique(df.mir2$dataset)), getPval, form=log10QDiff ~ method + mirexpr, df=df.mir2, opt="mir")
+p.values
+
+# add as separate column
+#df.mir2$pvals <- factor(unlist( sapply(as.character(unique(df.mir2$dataset)), function(x) rep(p.values[x],sum(df.mir2$dataset==x))) ))
+```
+
+### mirexpr FP & TP rates
+
+#### VERSION 1:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=8}
+
+# # TP heatmap
+# mh <- function(df, metric="TP.atFDR05", form=treatment+dataset+mirexpr~prop, fn=mean, cluster_cols=FALSE, annotate=T, ...){
+#   m <- reshape2::dcast(df, form, value.var=metric, na.rm=TRUE, fun.aggregate=fn)
+#   m$treatment <- as.character(m$treatment)
+#   row.names(m) <- m[,1]
+#   m[,1] <- NULL
+#   if(annotate) ann <- data.frame(dataset=m$dataset, row.names=rownames(m))
+#   else ann <- NULL
+#   m <- m[,-c(1,2)]
+#   pheatmap::pheatmap(m, cluster_cols=cluster_cols, cluster_rows=FALSE, annotation_row=ann, annotation_names_row=FALSE, ...)
+# }
+# 
+# df.sub <- df[df$exon.specific=="unseparated" & df$dataset!="jeong",]
+# 
+# p1a <- mh(df.sub[df.sub$dataset=="bartel" & df.sub$mirexpr=="mirexpr",], main="mirexpr", annotation_colors = colors,
+#          annotate=TRUE, legend=FALSE, annotation_legend=FALSE, show_rownames=FALSE, breaks=seq(0.7,1,length.out = 101))$gtable
+# p1b <- mh(df.sub[df.sub$dataset=="bartel" & df.sub$mirexpr!="mirexpr",], main="no_mirexpr", annotation_colors = colors, 
+#          annotation_legend=FALSE, breaks=seq(0.7,1,length.out = 101))$gtable
+# 
+# p2a <- mh(df.sub[df.sub$dataset!="bartel" & df.sub$mirexpr=="mirexpr",], main="mirexpr", annotation_colors = colors,
+#          annotate=TRUE, legend=FALSE, annotation_legend=FALSE, show_rownames=FALSE, breaks=seq(.2,1,length.out = 101))$gtable
+# p2b <- mh(df.sub[df.sub$dataset!="bartel" & df.sub$mirexpr!="mirexpr",], main="no_mirexpr", annotation_colors = colors, 
+#          annotation_legend=TRUE, breaks=seq(.2,1,length.out = 101))$gtable
+# 
+# gridExtra::grid.arrange(gridExtra::arrangeGrob(grobs=list(p1a,p1b),ncol=2, widths=c(5.6,6) ), 
+#                         top=grid::textGrob("TP rate \n", gp=grid::gpar(fontsize=18, fontface="bold")) )
+# gridExtra::grid.arrange(gridExtra::arrangeGrob(grobs=list(p2a,p2b),ncol=2, widths=c(4,6) ), 
+#                         top=grid::textGrob("TP rate \n", gp=grid::gpar(fontsize=18, fontface="bold")) )
+
+
+
+
+# create heatmap matrix
+MHv3 <- function(df, metric="TP.atFDR05", form=treatment+dataset+sample+mirexpr~prop, fn=mean, data.annotate=FALSE, name=name, ...){
+  # reshape data
+  m2 <- reshape2::dcast(df, form=form, value.var=metric, na.rm=TRUE, fun.aggregate=fn)
+  # allocation
+  if(any(grepl("mirexpr",as.character(form)))){
+    feature <- "mirexpr"
+    lvls <- c("no_mirexpr","mirexpr")
+  } else {
+    feature <- "exon.specific"
+    lvls <- c("unseparated","exonic")
+  }
+  # generate matrix & annotations
+  l <- split(m2,m2[[feature]])
+  l <- lapply(l, function(x) aggregate(x[,-c(1:4)], by=list(x[,1],x[,2]), FUN="mean"))
+  m3 <- cbind(l[[lvls[1]]][,-2],l[[lvls[2]]][,-c(1:2)])
+  ds <- as.character(l[[lvls[1]]]$Group.2)  
+  ds.bartel <- sapply(ds, function(x) if(x=="bartel") "bartel" else "other")
+  names(ds) <- names(ds.bartel) <- rownames(m3) <- m3$Group.1
+  m3 <- m3[,-1]
+  ds2 <- factor(c(rep(lvls[[1]],4),rep(lvls[[2]],4)), levels=lvls)
+  if(any(grepl("mirexpr",as.character(form)))){
+    ha <- HeatmapAnnotation(mir=ds2, col=colors, annotation_legend_param=list(title=feature),
+                          show_annotation_name=FALSE)
+  } else {
+    ha <- HeatmapAnnotation(ex=ds2, col=colors, annotation_legend_param=list(title=feature),
+                          show_annotation_name=FALSE)
+  }
+  # heatmap
+  hm <- ComplexHeatmap::Heatmap(m3, name=name, cluster_columns=FALSE, rect_gp=gpar(col="white",lwd =.5),
+                               column_split=ds2, 
+                               row_split=factor(ds.bartel, levels=c("bartel","other")),
+                               column_labels=rep(colnames(m3)[1:4],2), 
+                               column_title_gp=gpar(fontsize=12), column_title=metric,
+                               row_gap=unit(2,"mm"), column_gap=unit(2,"mm"), 
+                               top_annotation=ha, ...)
+  if(data.annotate){
+    hm2 <- ComplexHeatmap::Heatmap(ds, name="dataset", col=colors$dataset, ...)
+    return(hm2)
+  } else {
+    return(hm)
+  }
+}
+
+# take subset
+df.sub <- df[df$exon.specific=="unseparated" & df$dataset!="jeong",]
+# generate color gradient for TP
+hm.col1 <- circlize::colorRamp2(c(0.2,.6,1),c("#043495","#f4da71","#bd0f0f"), space="RGB")
+hm.col2 <- circlize::colorRamp2(seq(5,50,length=3),c("#043495","white","#bd0f0f"), space="RGB")
+# generate heatmaps
+hm1 <- MHv3(df.sub, col=hm.col1, name="TP rate")
+hm2 <- MHv3(df.sub, metric="FP.atFDR05", col=hm.col2, name="FP rate")
+hm3 <- MHv3(df.sub, data.annotate=TRUE, show_row_names=TRUE, width = unit(5, "mm"))
+# plot
+draw(hm1 + hm2 + hm3, ht_gap = unit(c(.5,.2), "cm"), show_row_dend=FALSE)
+```
+
+```{r}
+
+# FP heatmap
+
+#df.sub <- df[df$exon.specific=="unseparated" & df$dataset!="jeong",]
+
+# p1a <- mh(df.sub[df.sub$dataset=="bartel" & df.sub$mirexpr=="mirexpr",], metric="FP.atFDR05", main="mirexpr", annotation_colors = colors, 
+#           annotate=TRUE, legend=FALSE, annotation_legend=FALSE, show_rownames=FALSE, breaks=seq(0,50,length.out = 101))$gtable
+# p1b <- mh(df.sub[df.sub$dataset=="bartel" & df.sub$mirexpr!="mirexpr",], metric="FP.atFDR05", main="no_mirexpr", annotation_colors = colors, 
+#           annotation_legend=FALSE, breaks=seq(0,50,length.out = 101))$gtable
+# 
+# p2a <- mh(df.sub[df.sub$dataset!="bartel" & df.sub$mirexpr=="mirexpr",], metric="FP.atFDR05", main="mirexpr", annotation_colors = colors,
+#           annotate=TRUE, legend=FALSE, annotation_legend=FALSE, show_rownames=FALSE, breaks=seq(0,25,length.out = 101))$gtable
+# p2b <- mh(df.sub[df.sub$dataset!="bartel" & df.sub$mirexpr!="mirexpr",], metric="FP.atFDR05", main="no_mirexpr", annotation_colors = colors, 
+#           annotation_legend=TRUE, breaks=seq(0,25,length.out = 101))$gtable
+# 
+# 
+# gridExtra::grid.arrange(gridExtra::arrangeGrob(grobs=list(p1a,p1b),ncol=2, widths=c(5.6,6) ), 
+#                         top=grid::textGrob("Total FPs \n", gp=grid::gpar(fontsize=18, fontface="bold")) )
+# gridExtra::grid.arrange(gridExtra::arrangeGrob(grobs=list(p2a,p2b),ncol=2, widths=c(4,6) ), 
+#                         top=grid::textGrob("detPPV scores \n", gp=grid::gpar(fontsize=18, fontface="bold")) )
+```
+
+#### VERSION 2:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=8}
+
+# Score distributions: box (method)
+df.mir2 <- df[df$exon.specific=="unseparated" & df$dataset!="jeong",]
+df.mir2$log10QDiff[is.infinite(df.mir2$log10QDiff)] <- NA
+df.mir2$mirexpr <- relevel(droplevels(df.mir2$mirexpr), ref="no_mirexpr")
+
+df.mir2$dataset <- as.character(df.mir2$dataset)
+df.mir2$dataset[grepl("bartel.hela",df.mir2$sample)] <- as.character(df.mir2$sample[df.mir2$sample=="bartel.hela"])
+df.mir2$dataset[grepl("bartel.hek",df.mir2$sample)] <- as.character(df.mir2$sample[df.mir2$sample=="bartel.hek"])
+df.mir2$dataset <- factor(df.mir2$dataset)
+
+# ggplot(df.mir2, aes(x=method, y=TP.atFDR05, fill=mirexpr)) + geom_boxplot() +
+#   ylab("TP.atFDR05") + coord_flip() + scale_x_discrete(limits = rev(levels(df$method))) +
+#   scale_fill_manual(values = colors$mir) +
+#   #ggpubr::stat_compare_means(method="t.test", paired = TRUE, label.y.npc=.95, vjust=.7, label="p.signif", aes(group = mirexpr), hide.ns = F) +
+#   theme_cowplot() + facet_wrap(design~dataset) +
+#   #geom_text(aes(x=x,y=y,label=lab), data=data.frame(x=19, y=250, lab=p.values, dataset=names(p.values)),inherit.aes=FALSE, parse=FALSE)
+#   theme(panel.grid.major.y=element_line(colour = "grey"),
+#         axis.line=element_line(colour = "grey"),
+#         strip.background=element_rect(colour = "grey90"),
+#         axis.ticks=element_line(colour = "grey"),
+#         legend.position = c(1, 0),
+#         legend.justification = c(1, 0))
+
+# get pvalues overall
+p.values.TP.all <- getPval(form=TP.atFDR05 ~ method + dataset + mirexpr, df=df.mir2, opt="mir")
+p.values.TP.all
+p.values.FP.all <- getPval(form=FP.atFDR05 ~ method + dataset + mirexpr, df=df.mir2, opt="mir")
+p.values.FP.all
+
+# get pvalues per dataset
+p.values.TP <- sapply(as.character(unique(df.mir2$dataset)), getPval, form=TP.atFDR05 ~ method + mirexpr, df=df.mir2, opt="mir")
+p.values.TP
+p.values.FP <- sapply(as.character(unique(df.mir2$dataset)), getPval, form=FP.atFDR05 ~ method + mirexpr, df=df.mir2, opt="mir")
+p.values.FP
+
+lab.df <- data.frame(x=18.5, y=160, 
+                     design=c(rep("transfection",3),rep("KO",2)), 
+                     pvals=paste0("pval=",p.values.FP), 
+                     dataset=names(p.values.FP), 
+                     mirexpr=rep("mirexpr",length(p.values.FP)))
+
+ggplot(df.mir2, aes(x=method, y=FP.atFDR05, fill=mirexpr)) + geom_boxplot() +
+  ylab("FP.atFDR05") + coord_flip() + scale_x_discrete(limits = rev(levels(df$method))) +
+  scale_fill_manual(values = colors$mir) +
+  theme_cowplot() + facet_wrap(design~dataset) +
+  geom_label(aes(x=x,y=y,label=pvals, fill=NULL), data=lab.df,inherit.aes=T, parse=FALSE) +
+  theme(panel.grid.major.y=element_line(colour = "grey"),
+        axis.line=element_line(colour = "grey"),
+        strip.background=element_rect(colour = "grey90"),
+        axis.ticks=element_line(colour = "grey"),
+        legend.position = c(.9, 0.25),
+        legend.justification = c(.9, 0.25))
+```
+
+
+## exonic Analysis
+
+### Exon-separation effect: FP vs TP (method & prop & exon.specific)
+
+#### VERSION 1:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=8}
+
+# FP-TP plot (at FDR .05)
+
+## get average number of FP & TP at FDR .05 for each combination of permutation & method & mirexpr
+df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=df[,c("prop","method","exon.specific")], FUN=mean)
+
+library(ggrepel)
+ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+  geom_line() + 
+  guides(color=FALSE) +
+  coord_cartesian(ylim = c(0,1)) +
+  geom_point(size=3) + 
+  geom_label_repel(data=df.agg %>% filter(prop=="original"), 
+                  aes(label=method), 
+                  force=15, 
+                  ylim=c(0,1),
+                  segment.color="black",
+                  segment.alpha=.3, 
+                  arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last")
+                  ) +
+  geom_point() +
+  scale_color_manual(values = colors$method) +
+  theme_classic(base_size = 15) +
+  facet_wrap(~exon.specific) + 
+  scale_x_sqrt() +
+  theme_cowplot() +
+  theme(panel.border=element_rect(colour = "grey", fill = NA),
+        panel.grid.major=element_line(colour = "grey"), 
+        axis.line=element_blank(),
+        strip.background=element_rect(colour = "grey"),
+        axis.ticks=element_line(colour = "grey"))
+```
+
+#### VERSION 2:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=16}
+
+# FP-TP plot (at FDR .05)
+
+## get average number of FP & TP at FDR .05 for each combination of permutation & method & mirexpr
+#df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=df[,c("prop","method","exon.specific","dataset","design")], FUN=mean)
+df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=df[,c("method","exon.specific","dataset","design")], FUN=mean)
+
+
+library(ggrepel)
+# ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+#   geom_line() + 
+#   guides(color=FALSE) +
+#   coord_cartesian(ylim = c(0,1)) +
+#   geom_point(size=3) + 
+#   geom_label_repel(data=df.agg %>% filter(prop=="original"), 
+#                   aes(label=method), 
+#                   force=10, 
+#                   size=3,
+#                   ylim=c(0,1),
+#                   segment.color="black",
+#                   segment.alpha=.3, 
+#                   arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last")
+#                   ) +
+#   geom_point() +
+#   scale_color_manual(values = colors$method) +
+#   facet_grid(design+dataset ~ exon.specific) + 
+#   scale_x_sqrt() +
+#   theme_cowplot() +
+#   theme(panel.border=element_rect(colour = "grey", fill = NA),
+#         panel.grid.major=element_line(colour = "grey"), 
+#         axis.line=element_blank(),
+#         strip.background=element_rect(colour = "grey90"),
+#         axis.ticks=element_line(colour = "grey"))
+
+
+
+ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method)) + 
+  guides() +
+  coord_cartesian(ylim = c(0,1)) +
+  geom_point(size=2.5) + 
+  geom_label_repel(data=subset(df.agg, method %in% c("wEN","EN","michael","regmir","KS2","combGeom.3","aREAmir")), 
+                  aes(label=method), 
+                  force=13, 
+                  size=3.5,
+                  ylim=c(0.05,.9),
+                  segment.color="black",
+                  segment.alpha=.2, 
+                  arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last"),
+                  box.padding = unit(0.5, "lines"),
+                  point.padding = unit(.35, 'lines'),
+                  nudge_x=1
+                  ) +
+  geom_point() +
+  scale_color_manual(values = colors$method) +
+  facet_grid(design+dataset ~ exon.specific) + 
+  scale_x_sqrt() +
+  theme_cowplot() +
+  theme(panel.border=element_rect(colour = "grey35", fill = NA),
+        panel.grid.major=element_line(colour = "grey85"), 
+        axis.line=element_blank(),
+        strip.background=element_rect(colour = "grey35"),
+        axis.ticks=element_line(colour = "grey35"))
+```
+
+### Score distributions: box (method)
+
+```{r, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=7}
+# Score distributions: box (method)
+df.ex2 <- df[df$mirexpr=="no_mirexpr",]
+df.ex2$log10QDiff[is.infinite(df.ex2$log10QDiff)] <- NA
+df.ex2$exon.specific <- relevel(droplevels(df.ex2$exon.specific), ref="unseparated")
+
+df.ex2$dataset <- as.character(df.ex2$dataset)
+df.ex2$dataset[grepl("bartel.hela",df.ex2$sample)] <- as.character(df.ex2$sample[df.ex2$sample=="bartel.hela"])
+df.ex2$dataset[grepl("bartel.hek",df.ex2$sample)] <- as.character(df.ex2$sample[df.ex2$sample=="bartel.hek"])
+df.ex2$dataset <- factor(df.ex2$dataset)
+
+
+ggplot(df.ex2, aes(x=method, y=log10QDiff, fill=exon.specific)) + geom_boxplot() +
+  ylab("log10QDiff") + coord_flip() + scale_x_discrete(limits = rev(levels(df$method))) +
+  scale_fill_manual(values = colors$ex) + geom_hline(yintercept=0, linetype="dotted", size=0.5) +
+  #ggpubr::stat_compare_means(method="wilcox.test", paired = FALSE, label.y.npc=.95, vjust=.7, label="p.signif", aes(group=exon.specific), hide.ns = T) +
+  theme_cowplot() + facet_wrap(design~dataset) #+
+  #geom_text(aes(x=x,y=y,label=lab), data=data.frame(x=19, y=250, lab=p.values, dataset=names(p.values)),inherit.aes=FALSE, parse=FALSE)
+
+  
+# get pvalues per dataset
+p.values <- sapply(as.character(unique(df.ex2$dataset)), getPval, form=log10QDiff ~ method + exon.specific, df=df.ex2, opt="ex")
+p.values
+
+# add as separate column
+df.ex2$pvals <- factor(unlist( sapply(as.character(unique(df.ex2$dataset)), function(x) rep(p.values[x],sum(df.ex2$dataset==x))) ))
+```
+
+### exonic FP & TP rates
+
+#### VERSION 1:
+
+```{r, warning=FALSE, eval=TRUE, fig.width=12, fig.height=8}
+
+# TP heatmap
+# mh <- function(df, metric="TP.atFDR05", form=treatment+dataset+mirexpr~prop, fn=mean, cluster_cols=FALSE, annotate=T, ...){
+#   m <- reshape2::dcast(df, form, value.var=metric, na.rm=TRUE, fun.aggregate=fn)
+#   m$treatment <- as.character(m$treatment)
+#   row.names(m) <- m[,1]
+#   m[,1] <- NULL
+#   if(annotate) ann <- data.frame(dataset=m$dataset, row.names=rownames(m))
+#   else ann <- NULL
+#   m <- m[,-c(1,2)]
+#   pheatmap::pheatmap(m, cluster_cols=cluster_cols, cluster_rows=FALSE, annotation_row=ann, annotation_names_row=FALSE, ...)
+# }
+# 
+# df.sub <- df[df$mirexpr=="no_mirexpr",]
+
+# p1a <- mh(df.sub[df.sub$dataset=="bartel" & df.sub$mirexpr=="mirexpr",], "detPPV", main="mirexpr", annotation_colors = colors,
+#          annotate=TRUE, legend=FALSE, annotation_legend=FALSE, show_rownames=FALSE, breaks=seq(0.65,1,length.out = 101))$gtable
+# p1b <- mh(df.sub[df.sub$dataset=="bartel" & df.sub$mirexpr!="mirexpr",], "detPPV", main="no_mirexpr", annotation_colors = colors, 
+#          annotation_legend=FALSE, breaks=seq(0.65,1,length.out = 101))$gtable
+# 
+# p2a <- mh(df.sub[df.sub$dataset!="bartel" & df.sub$mirexpr=="mirexpr",], "detPPV", main="mirexpr", annotation_colors = colors,
+#          annotate=TRUE, legend=FALSE, annotation_legend=FALSE, show_rownames=FALSE, breaks=NULL)$gtable
+# p2b <- mh(df.sub[df.sub$dataset!="bartel" & df.sub$mirexpr!="mirexpr",], "detPPV", main="no_mirexpr", annotation_colors = colors, 
+#          annotation_legend=TRUE, breaks=NULL)$gtable
+
+
+# 
+# p1a <- mh(df.sub[df.sub$dataset=="bartel" & df.sub$exon.specific=="exonic",], main="exonic", annotation_colors = colors,
+#          annotate=TRUE, legend=FALSE, annotation_legend=FALSE, show_rownames=FALSE, breaks=seq(.2,1,length.out = 101))$gtable
+# p1b <- mh(df.sub[df.sub$dataset=="bartel" & df.sub$exon.specific!="exonic",], main="unseparated", annotation_colors = colors, 
+#          annotation_legend=FALSE, breaks=seq(0.2,1,length.out = 101))$gtable
+# 
+# p2a <- mh(df.sub[df.sub$dataset!="bartel" & df.sub$exon.specific=="exonic",], main="exonic", annotation_colors = colors,
+#          annotate=TRUE, legend=FALSE, annotation_legend=FALSE, show_rownames=FALSE, breaks=seq(0,.9,length.out = 101))$gtable
+# p2b <- mh(df.sub[df.sub$dataset!="bartel" & df.sub$exon.specific!="exonic",], main="unseparated", annotation_colors = colors, 
+#          annotation_legend=TRUE, breaks=seq(0,.9,length.out = 101))$gtable
+# 
+# gridExtra::grid.arrange(gridExtra::arrangeGrob(grobs=list(p1a,p1b),ncol=2, widths=c(5.6,6) ), 
+#                         top=grid::textGrob("TP rate \n", gp=grid::gpar(fontsize=18, fontface="bold")) )
+# gridExtra::grid.arrange(gridExtra::arrangeGrob(grobs=list(p2a,p2b),ncol=2, widths=c(4,6) ), 
+#                         top=grid::textGrob("TP rate \n", gp=grid::gpar(fontsize=18, fontface="bold")) )
+
+
+# take subset
+df.sub <- df[df$mirexpr=="no_mirexpr",]
+# generate color gradient for TP
+hm.col1 <- circlize::colorRamp2(c(0,.6,1),c("#043495","#f4da71","#bd0f0f"), space="RGB")
+hm.col2 <- circlize::colorRamp2(seq(5,50,length=3),c("#043495","white","#bd0f0f"), space="RGB")
+# generate heatmaps
+hm1 <- MHv3(df.sub, col=hm.col1, name="TP rate", form=treatment+dataset+sample+exon.specific~prop)
+hm2 <- MHv3(df.sub, metric="FP.atFDR05", col=hm.col2, name="FP rate", form=treatment+dataset+sample+exon.specific~prop)
+hm3 <- MHv3(df.sub, data.annotate=TRUE, show_row_names=TRUE, width = unit(5, "mm"), form=treatment+dataset+sample+exon.specific~prop)
+# plot
+draw(hm1 + hm2 + hm3, ht_gap = unit(c(.5,.2), "cm"), show_row_dend=FALSE)
+```
+
+```{r}
+# 
+# # FP heatmap
+# 
+# #df.sub <- df[df$mirexpr=="no_mirexpr",]
+# 
+# p1a <- mh(df.sub[df.sub$dataset=="bartel" & df.sub$exon.specific=="exonic",], metric="FP.atFDR05", main="exonic", annotation_colors = colors, 
+#           annotate=TRUE, legend=FALSE, annotation_legend=FALSE, show_rownames=FALSE, breaks=seq(5,50,length.out = 101))$gtable
+# p1b <- mh(df.sub[df.sub$dataset=="bartel" & df.sub$exon.specific!="exonic",], metric="FP.atFDR05", main="unseparated", annotation_colors = colors, 
+#           annotation_legend=FALSE, breaks=seq(5,50,length.out = 101))$gtable
+# 
+# p2a <- mh(df.sub[df.sub$dataset!="bartel" & df.sub$exon.specific=="exonic",], metric="FP.atFDR05", main="exonic", annotation_colors = colors,
+#           annotate=TRUE, legend=FALSE, annotation_legend=FALSE, show_rownames=FALSE, breaks=seq(0,25,length.out = 101))$gtable
+# p2b <- mh(df.sub[df.sub$dataset!="bartel" & df.sub$exon.specific!="exonic",], metric="FP.atFDR05", main="unseparated", annotation_colors = colors, 
+#           annotation_legend=TRUE, breaks=seq(0,25,length.out = 101))$gtable
+# 
+# gridExtra::grid.arrange(gridExtra::arrangeGrob(grobs=list(p1a,p1b),ncol=2, widths=c(5.6,6) ), 
+#                         top=grid::textGrob("Total FPs \n", gp=grid::gpar(fontsize=18, fontface="bold")) )
+# 
+# gridExtra::grid.arrange(gridExtra::arrangeGrob(grobs=list(p2a,p2b),ncol=2, widths=c(4,6) ), 
+#                         top=grid::textGrob("Total FPs \n", gp=grid::gpar(fontsize=18, fontface="bold")) )
+```
+
+#### VERSION 2:
+
+```{r, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=8}
+
+# Score distributions: box (method)
+df.ex2 <- df[df$mirexpr=="no_mirexpr",]
+df.ex2$log10QDiff[is.infinite(df.ex2$log10QDiff)] <- NA
+df.ex2$exon.specific <- relevel(droplevels(df.ex2$exon.specific), ref="unseparated")
+
+df.ex2$dataset <- as.character(df.ex2$dataset)
+df.ex2$dataset[grepl("bartel.hela",df.ex2$sample)] <- as.character(df.ex2$sample[df.ex2$sample=="bartel.hela"])
+df.ex2$dataset[grepl("bartel.hek",df.ex2$sample)] <- as.character(df.ex2$sample[df.ex2$sample=="bartel.hek"])
+df.ex2$dataset <- factor(df.ex2$dataset)
+
+# 
+# ggplot(df.ex2, aes(x=method, y=TP.atFDR05, fill=exon.specific)) + geom_boxplot() +
+#   ylab("TP.atFDR05") + coord_flip() + scale_x_discrete(limits = rev(levels(df$method))) +
+#   scale_fill_manual(values = colors$ex) +
+#   #ggpubr::stat_compare_means(method="t.test", paired = TRUE, label.y.npc=.95, vjust=.7, label="p.signif", aes(group = mirexpr), hide.ns = F) +
+#   theme_cowplot() + facet_wrap(design~dataset) +
+#   #geom_text(aes(x=x,y=y,label=lab), data=data.frame(x=19, y=250, lab=p.values, dataset=names(p.values)),inherit.aes=FALSE, parse=FALSE)
+#   theme(panel.grid.major.y=element_line(colour = "grey"),
+#         axis.line=element_line(colour = "grey"),
+#         strip.background=element_rect(colour = "grey90"),
+#         axis.ticks=element_line(colour = "grey"))
+
+
+# get pvalues overall
+p.values.TP.all <- getPval(form=TP.atFDR05 ~ method + dataset + exon.specific, df=df.ex2, opt="ex")
+p.values.TP.all
+p.values.FP.all <- getPval(form=FP.atFDR05 ~ method + dataset + exon.specific, df=df.ex2, opt="ex")
+p.values.FP.all
+
+# get pvalues per dataset
+p.values.TP <- sapply(as.character(unique(df.ex2$dataset)), getPval, form=TP.atFDR05 ~ method + exon.specific, df=df.ex2, opt="ex")
+p.values.TP
+p.values.FP <- sapply(as.character(unique(df.ex2$dataset)), getPval, form=FP.atFDR05 ~ method + exon.specific, df=df.ex2, opt="ex")
+p.values.FP
+
+lab.df <- data.frame(x=18.5, y=155, 
+                     design=c(rep("transfection",2),"KO","transfection",rep("KO",2)), 
+                     pvals=paste0("pval=",p.values.FP), 
+                     dataset=names(p.values.FP), 
+                     exon.specific=rep("exonic",length(p.values.FP)))
+
+ggplot(df.ex2, aes(x=method, y=FP.atFDR05, fill=exon.specific)) + geom_boxplot() +
+  ylab("FP.atFDR05") + coord_flip() + scale_x_discrete(limits = rev(levels(df$method))) +
+  scale_fill_manual(values = colors$ex) + 
+  theme_cowplot() + facet_wrap(design~dataset) +
+  geom_label(aes(x=x,y=y,label=pvals, fill=NULL), data=lab.df,inherit.aes=T, parse=FALSE) +
+  theme(panel.grid.major.y=element_line(colour = "grey"),
+        axis.line=element_line(colour = "grey"),
+        strip.background=element_rect(colour = "grey90"),
+        axis.ticks=element_line(colour = "grey"))
+```
+
+
+
+
+
+
+
+### FP vs TP (method & prop & exon.specific)
+
+```{r, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=8}
+
+# FP-TP plot (at FDR .05)
+
+## get average number of FP & TP at FDR .05 for each combination of permutation & method & mirexpr
+df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=df[,c("prop","method","exon.specific")], FUN=mean)
+
+library(ggrepel)
+ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+  geom_line() + 
+  geom_point(size=3) + 
+  geom_label_repel(data=df.agg %>% filter(prop=="original"), 
+                  aes(label=method), 
+                  force=5, 
+                  segment.color="black",
+                  segment.alpha=.4, 
+                  arrow=arrow(length = unit(.01,"npc"), type = "open", ends = "last")
+                  ) +
+  geom_point() +
+  theme_classic(base_size = 15) +
+  facet_wrap(~exon.specific)
+```
+
+### robustness of tests
+
+```{r, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=8}
+# Score distributions: violin (method & prop)
+for(i in c("detPPV","FP.atFDR05","log10QDiff","TP.atFDR05")){
+  print(
+   ggplot(df, aes(x=prop, y=df[[i]], fill=method))  + geom_violin(draw_quantiles = 0.5) + facet_wrap(~method) +
+    guides(fill=FALSE) + ylab(i)
+  )
+}
+```
+
+```{r, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=8}
+# Score distributions: violin (method & prop)
+for(i in c("detPPV","FP.atFDR05","log10QDiff","TP.atFDR05")){
+  print(
+   ggplot(df, aes(x=prop, y=df[[i]], fill=method))  + geom_boxplot() + facet_wrap(~method) +
+    guides(fill=FALSE) + ylab(i)
+  )
+}
+```
+
+### sample difficulty
+
+```{r, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=8}
+# Score distributions: violin (method & prop)
+for(i in c("detPPV","FP.atFDR05","log10QDiff","TP.atFDR05")){
+  print(
+   ggplot(df, aes(x=prop, y=df[[i]], fill=treatment))  + geom_violin(draw_quantiles = 0.5) + facet_wrap(~treatment) +
+    guides(fill=FALSE) + ylab(i)
+  )
+}
+```
+
+
+
+
+
+### Score distributions: density (method & prop)
+
+```{r, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=7}
+# Score distributions: density (method & prop)
+for(i in c("detPPV","FP.atFDR05","log10QDiff")){
+  print(
+    ggplot(df, aes(log10(df[[i]]+1))) + geom_density(aes(fill=method), alpha=0.9)  + facet_wrap(~prop) + xlab(i)
+  )
+}
+ggplot(df, aes(df$TP.atFDR05)) + geom_density(aes(fill=method), alpha=0.9)  + facet_wrap(~prop) + xlab(i)
+```
+
+### Score distributions: box (method & prop)
+
+```{r, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=8}
+# Score distributions: box (method & prop)
+for(i in c("FP.atFDR05","log10QDiff")){
+  print(
+      ggplot(df, aes(x=method, y=df[[i]], fill=method)) + geom_boxplot() + facet_wrap(~prop) +
+            guides(fill=FALSE) + ylab(i) + coord_flip() + scale_x_discrete(limits = rev(levels(df$method))) +
+            geom_hline(yintercept=0, linetype="dashed")
+          )
+}
+```
+
+### Score distributions: curve (method & prop)
+
+```{r, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=7}
+# Score distributions: curve (method & prop)
+# for(i in c("detPPV","FP.atFDR05","log10QDiff","TP.atFDR05")){
+#   print(
+#       ggplot(df, aes(x=as.integer(df$prop), y=df[[i]], color=method)) + geom_smooth(alpha=.1) + scale_x_continuous(labels=levels(df$prop)) +
+#         ylab(i) + xlab("prop")
+#       )
+# }
+```
+
+```{r fp-tp plot, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=8}
+
+# FP-TP plot (at FDR .05)
+## get average number of FP & TP at FDR .05 for each combination of permutation & method
+df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=df[,c("prop","method")], FUN=mean)
+
+library(ggrepel)
+ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+  geom_line() + 
+  geom_point(size=3) + 
+  geom_label_repel(data=df.agg %>% filter(prop==50), 
+                  aes(label=method), 
+                  force=5, 
+                  segment.color="black",
+                  segment.alpha=.4, 
+                  arrow=arrow(length = unit(.01,"npc"), type = "open", ends = "last")
+                  ) +
+  geom_point() +
+  theme_classic(base_size = 15)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r plot2, eval=F}
 
 # plots
 for(i in c("detPPV","FP.atFDR05","log10QDiff","TP.atFDR05")){
   cat("Score analysis: ", i,"\n\n")
   ## boxplot
-  # print( 
-  #   ggplot(df, aes(x=prop, y=df[[i]], fill=method)) + geom_boxplot() + ylab(i) 
+  # print(
+  #   ggplot(df, aes(x=prop, y=df[[i]], fill=method)) + geom_boxplot() + ylab(i)
   #   )
   if(i!="TP.atFDR05"){
     ## density plot: score distribution per permutation
-    print( 
+    print(
       ggplot(df, aes(log10(df[[i]]))) + geom_density(aes(fill=method), alpha=0.9)  + facet_wrap(~prop) + xlab(i)
       )
     ## violin plot
     if(!i %in% c("FP.atFDR05","log10QDiff")){
-      print( 
+      print(
         ggplot(df, aes(x=prop, y=df[[i]], fill=method))  + geom_violin() + facet_wrap(~method) +
           guides(fill=FALSE) + ylab(i) + geom_jitter(shape=16, position=position_jitter(0.2))
       )
@@ -107,18 +1312,142 @@ for(i in c("detPPV","FP.atFDR05","log10QDiff","TP.atFDR05")){
  print(
    ggplot(df, aes(x=prop, y=df[[i]], fill=method))  + geom_violin(draw_quantiles = 0.5) + facet_wrap(~method) +
     guides(fill=FALSE) + ylab(i)
-  ) 
+  )
   ## mean curves plot
   if(i!="FP.atFDR05"){
     print(
-      ggplot(df, aes(x=as.integer(df$prop), y=df[[i]], color=method)) + geom_smooth(alpha=.1) + scale_x_continuous(labels=unique(props.all)) + 
+      ggplot(df, aes(x=as.integer(df$prop), y=df[[i]], color=method)) + geom_smooth(alpha=.1) + scale_x_continuous(labels=unique(props.all)) +
         ylab(i) + xlab("prop")
       )
   }
 }
+
 ```
 
-```{r fp-tp plot, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=8}
+
+# Plots {.tabset .tabset-fade}
+
+```{r plot scores, results="asis", message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=6}
+
+
+for(i in seq_along(input)){
+  # title
+  cat("## ", names(input)[i],"\n\n")
+  df <- readRDS(input[[i]])
+  # score plots
+  for(j in c("detPPV","FP.atFDR05","log10QDiff","TP.atFDR05")){
+    if(j!="TP.atFDR05"){
+      ## density plot: score distribution per permutation
+      cat("\n\n")
+      cat("### ","Scores density plot: ",j,"\n\n")
+      print( 
+        ggplot(df, aes(log10(df[[j]]))) + geom_density(aes(fill=method), alpha=0.9)  + facet_wrap(~prop) + xlab(j)
+        )
+      ## violin plot
+      if(!j %in% c("FP.atFDR05","log10QDiff")){
+        cat("\n\n")
+        cat("### ","Scores violin plot: ",j,"\n\n")
+        print( 
+          ggplot(df, aes(x=prop, y=df[[j]], fill=method))  + geom_violin() + facet_wrap(~method) +
+            guides(fill=FALSE) + ylab(j) + geom_jitter(shape=16, position=position_jitter(0.2))
+        )
+      }
+    }
+    ## boxplot FP
+    if(j=="FP.atFDR05"){
+      cat("\n\n")
+      cat("### ","Scores boxplot: ",j,"\n\n")
+      print(
+        ggplot(df, aes(x=method, y=df[[j]], fill=method)) + geom_boxplot() +
+              guides(fill=FALSE) + ylab(j) + coord_flip() + scale_x_discrete(limits = rev(levels(df$method)))
+            )
+    }
+    ## violin plot median
+    cat("\n\n")
+    cat("### ","Scores violin plot: ",j,"\n\n")
+    print(
+     ggplot(df, aes(x=prop, y=df[[j]], fill=method))  + geom_violin(draw_quantiles = 0.5) + facet_wrap(~method) +
+      guides(fill=FALSE) + ylab(j)
+    ) 
+    ## mean curves plot
+    if(i!="FP.atFDR05"){
+      cat("\n\n")
+      cat("### ","Scores smoothed means: ",j,"\n\n")
+      print(
+        ggplot(df, aes(x=as.integer(df$prop), y=df[[j]], color=method)) + geom_smooth(alpha=.1) + scale_x_continuous(labels=unique(props.all)) + 
+          ylab(j) + xlab("prop")
+        )
+    }
+  }
+  cat("\n\n")
+  cat("### ","FP-TP plot: ",names(input)[i],"\n\n")
+  # FP-TP plot (at FDR .05)
+  ## get average number of FP & TP at FDR .05 for each combination of permutation & method
+  df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=df[,c("prop","method")], FUN=mean)
+  ## plot
+  print(
+    ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+    geom_line() + 
+    geom_point(size=3) + 
+    geom_label_repel(data=df.agg %>% filter(prop==50), 
+                    aes(label=method), 
+                    force=5, 
+                    box.padding = unit(.75, "lines"),
+                    segment.color="black",
+                    segment.alpha=.2, 
+                    arrow=arrow(length = unit(.01,"npc"), type = "open", ends = "last")
+                    ) +
+    geom_point() +
+    theme_classic(base_size = 15)
+  )
+  
+  cat("\n\n")
+}
+
+
+# # plots
+# for(i in c("detPPV","FP.atFDR05","log10QDiff","TP.atFDR05")){
+#   cat("Score analysis: ", i,"\n\n")
+#   ## boxplot
+#   # print( 
+#   #   ggplot(df, aes(x=prop, y=df[[i]], fill=method)) + geom_boxplot() + ylab(i) 
+#   #   )
+#   if(i!="TP.atFDR05"){
+#     ## density plot: score distribution per permutation
+#     print( 
+#       ggplot(df, aes(log10(df[[i]]))) + geom_density(aes(fill=method), alpha=0.9)  + facet_wrap(~prop) + xlab(i)
+#       )
+#     ## violin plot
+#     if(!i %in% c("FP.atFDR05","log10QDiff")){
+#       print( 
+#         ggplot(df, aes(x=prop, y=df[[i]], fill=method))  + geom_violin() + facet_wrap(~method) +
+#           guides(fill=FALSE) + ylab(i) + geom_jitter(shape=16, position=position_jitter(0.2))
+#       )
+#     }
+#   }
+#   ## boxplot FP
+#   if(i=="FP.atFDR05"){
+#     print(
+#       ggplot(df, aes(x=method, y=df[[i]], fill=method)) + geom_boxplot() +
+#             guides(fill=FALSE) + ylab(i) + coord_flip() + scale_x_discrete(limits = rev(levels(df$method)))
+#           )
+#   }
+#   ## violin plot median
+#  print(
+#    ggplot(df, aes(x=prop, y=df[[i]], fill=method))  + geom_violin(draw_quantiles = 0.5) + facet_wrap(~method) +
+#     guides(fill=FALSE) + ylab(i)
+#   ) 
+#   ## mean curves plot
+#   if(i!="FP.atFDR05"){
+#     print(
+#       ggplot(df, aes(x=as.integer(df$prop), y=df[[i]], color=method)) + geom_smooth(alpha=.1) + scale_x_continuous(labels=unique(props.all)) + 
+#         ylab(i) + xlab("prop")
+#       )
+#   }
+# }
+```
+
+```{r fp-tp plot2, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=8, eval=F}
 
 # FP-TP plot (at FDR .05)
 ## get average number of FP & TP at FDR .05 for each combination of permutation & method
@@ -152,7 +1481,7 @@ ggplot(df.agg, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=m
 
 ### scores over the datasets
 
-```{r overview mean datasets, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=6}
+```{r overview mean datasets, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=6, eval=F}
 
 # mean scores over all datasets; this shows which datasets were difficult to handle for the tests
 ggplot(df, aes(x=prop, y=detPPV, fill=treatment))  + geom_violin(draw_quantiles = 0.5) + facet_wrap(~treatment) +
@@ -172,7 +1501,7 @@ mean.datasets
 
 ### scores over methods
 
-```{r overview mean methods, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=6}
+```{r overview mean methods, message=FALSE, warning=FALSE, eval=F, fig.width=12, fig.height=6, eval=F}
 
 # mean scores over all methods
 ggplot(df, aes(x=prop, y=detPPV, fill=method))  + geom_violin(draw_quantiles = 0.5) + facet_wrap(~method) +
@@ -192,7 +1521,7 @@ mean.methods
 
 ### TP ratio at FDR 0.05 over methods
 
-```{r overview sensitivity methods, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=6}
+```{r overview sensitivity methods, message=FALSE, warning=FALSE, eval=TRUE, fig.width=12, fig.height=6, eval=F}
 
 # sensitivity score (ratio of TP at FDR 0.05)
 sens.methods <- lapply( unique(df$method), FUN=function(x) 
@@ -206,3 +1535,100 @@ for(i in unique(df$method)){
 }
 sens.methods
 ```
+
+### Pierre analysis
+
+#### standard
+
+```{r}
+
+# we first check the 'standard' procedure
+df.std <- df[df$mirexpr=="no_mirexpr" & df$exon.specific=="unseparated",]
+```
+
+```{r, fig.width=10, fig.height=9}
+ggplot(df.std, aes(prop, TP.atFDR05, fill=dataset)) + geom_boxplot() + facet_wrap(~dataset+seed)
+```
+
+#### Effect of mirexpr
+
+```{r}
+df.mir1 <- df.mir[df.mir$dataset!="cherone",]
+row.names(df.mir1) <- paste(df.mir1$dataset,df.mir1$seed,df.mir1$prop.rep,df.mir1$method)
+df.mir2 <- df.mir[df.mir$dataset=="cherone",]
+row.names(df.mir2) <- paste(gsub(".mirexpr","",df.mir2$sample),df.mir2$seed,df.mir2$prop.rep,df.mir2$method)
+df.mir <- rbind(df.mir1,df.mir2)
+
+df.std.b <- df.std[df.std$treatment %in% df.mir$treatment,]
+df.std.b1 <- df.std.b[df.std.b$dataset!="cherone",]
+row.names(df.std.b1) <- paste(df.std.b1$dataset,df.std.b1$seed,df.std.b1$prop.rep,df.std.b1$method)
+df.std.b2 <- df.std.b[df.std.b$dataset=="cherone",]
+row.names(df.std.b2) <- paste(gsub(".mirexpr","",df.std.b2$sample),df.std.b2$seed,df.std.b2$prop.rep,df.std.b2$method)
+df.std.b <- rbind(df.std.b1,df.std.b2)
+
+# difference between the TP values: mirexpr - no_mirexpr
+df.mir <- df.mir[row.names(df.std.b),]
+df.mir$TP.diff <- df.mir$TP.atFDR05-df.std.b$TP.atFDR05
+df.mir$detPPV.diff <- df.mir$detPPV-df.std.b$detPPV
+# by dataset
+table(df.mir$TP.diff, df.mir$dataset)
+# in total
+table(df.mir$TP.diff)
+```
+
+```{r}
+table(df.mir$TP.diff, df.mir$sample)["-1",]
+table(df.mir$TP.diff, df.mir$method)
+```
+
+```{r}
+hist(df.mir$detPPV.diff[df.mir$detPPV.diff!=0], breaks=20, xlab="Difference in PPV (where non-null)", main="Effect of mirexpr on detPPV")
+ggplot(df.mir, aes(method, detPPV.diff)) + geom_violin() + coord_flip()
+```
+
+#### Effect of spliced-specific analysis
+
+```{r}
+df.ex1 <- df.ex[df.ex$dataset!="cherone",]
+row.names(df.ex1) <- paste(df.ex1$dataset,df.ex1$seed,df.ex1$prop.rep,df.ex1$method)
+df.ex2 <- df.ex[df.ex$dataset=="cherone",]
+row.names(df.ex2) <- paste(gsub(".exon","",df.ex2$sample),df.ex2$seed,df.ex2$prop.rep,df.ex2$method)
+df.ex <- rbind(df.ex1,df.ex2)
+
+df.std.b <- df.std[df.std$treatment %in% df.ex$treatment,]
+df.std.b1 <- df.std.b[df.std.b$dataset!="cherone",]
+row.names(df.std.b1) <- paste(df.std.b1$dataset,df.std.b1$seed,df.std.b1$prop.rep,df.std.b1$method)
+df.std.b2 <- df.std.b[df.std.b$dataset=="cherone",]
+row.names(df.std.b2) <- paste(gsub(".exon","",df.std.b2$sample),df.std.b2$seed,df.std.b2$prop.rep,df.std.b2$method)
+df.std.b <- rbind(df.std.b1,df.std.b2)
+
+# difference between the TP values: mirexpr - no_mirexpr
+df.ex <- df.ex[row.names(df.std.b),]
+df.ex$TP.diff <- df.ex$TP.atFDR05-df.std.b$TP.atFDR05
+df.ex$detPPV.diff <- df.ex$detPPV-df.std.b$detPPV
+# by dataset
+table(df.ex$TP.diff, df.ex$dataset)
+```
+
+```{r}
+table(df.ex$TP.diff, df.ex$sample)
+table(df.ex$TP.diff, df.ex$method)
+```
+
+```{r}
+hist(df.ex$detPPV.diff[df.ex$detPPV.diff!=0], breaks=20, xlab="Difference in PPV (where non-null)", main="Effect of mirexpr on detPPV")
+ggplot(df.ex, aes(method, detPPV.diff)) + geom_violin() + coord_flip()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

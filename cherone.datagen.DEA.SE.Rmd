@@ -1,0 +1,252 @@
+---
+title: "Cherone DEA SE generation"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: 'cerulean'
+    highlight: 'tango'
+    df_print: paged
+---
+  
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(SummarizedExperiment)
+  library(SEtools)
+  library(ggplot2)
+  library(plgINS)
+  library(edgeR)
+})
+```
+
+## Loading
+
+```{r import, message=FALSE, warning=FALSE, eval=TRUE}
+
+# load splice SE
+se <- readRDS("data/raw/cherone.raw.SE.rds")
+```
+
+## Prep
+
+```{r modify, message=FALSE, warning=FALSE, eval=TRUE}
+
+# modify colData
+se$miRNA <- factor(c(rep("138DKO",2),rep("WT",2)))
+se$day <- factor(c(rep("0",4),rep("1",4)))
+se$rep <- factor(c(1,2))
+
+# separate the 2 days & filter
+filter <- c(10,2)
+se.d0 <- se[,se$day==0]
+se.d0 <- se.d0[rowSums(assay(se.d0) >= filter[1]) >= filter[2],]
+se.d1 <- se[,se$day==1]
+se.d1 <- se.d1[rowSums(assay(se.d1) >= filter[1]) >= filter[2],]
+```
+
+```{r add assays function, message=FALSE, warning=FALSE, eval=TRUE}
+
+logAssays <- function(se, control){
+  ## SE object with logCPM & logFC assays
+  assays(se)$logcpm <- log1p(cpm(calcNormFactors(DGEList(assay(se)))))
+  se <- SEtools::log2FC(se, controls = se$miRNA==control, fromAssay = "logcpm")
+  return(se)
+}
+```
+
+```{r add assays, message=FALSE, warning=FALSE, eval=TRUE}
+se <- logAssays(se, "WT")
+se.d0 <- logAssays(se.d0, "WT")
+se.d1 <- logAssays(se.d1, "WT")
+```
+
+## PCA
+
+```{r pca, message=FALSE, warning=FALSE, eval=TRUE}
+
+# plot PCA to check for batch effect
+
+## combined
+plgINS::plPCA(assays(se)$logcpm, as.data.frame(colData(se)), colorBy = "rep", shapeBy = "day",
+              add.labels = FALSE, annotation_columns = colnames(colData(se))[c(3:5)])
+## day 0
+plgINS::plPCA(assays(se.d0)$logcpm, as.data.frame(colData(se.d0)), colorBy = "rep", shapeBy = "miRNA",
+              add.labels = FALSE, annotation_columns = colnames(colData(se.d0))[c(3:5)])
+## day 1
+plgINS::plPCA(assays(se.d1)$logcpm, as.data.frame(colData(se.d1)), colorBy = "rep", shapeBy = "miRNA",
+              add.labels = FALSE, annotation_columns = colnames(colData(se.d1))[c(3:5)])
+```
+
+## DEA
+
+```{r dea variables, message=FALSE, warning=FALSE, eval=TRUE}
+
+# define variables for individual DEAs
+ctrl <- "WT"
+mirna <- unique(as.character(se$miRNA[se$miRNA!=ctrl]))
+dea.names <- paste0(unique(se$miRNA[se$miRNA!=ctrl]),"vWT")
+# select reference factors
+se.d0$miRNA <- relevel(droplevels(se.d0$miRNA), ref=ctrl)
+se.d1$miRNA <- relevel(droplevels(se.d1$miRNA), ref=ctrl)
+```
+
+```{r dea combined, message=FALSE, warning=FALSE, eval=TRUE}
+
+source("functions/dea.R")
+
+# DEA over all treatments: day 0
+se.d0 <- DEA(se.d0, name="all", model = ~miRNA, model0 = ~1)
+
+# DEA over all treatments: day 1
+se.d1 <- DEA(se.d1, name="all", model = ~miRNA, model0 = ~1)
+```
+
+```{r dea individual, message=FALSE, warning=FALSE, eval=TRUE}
+
+source("functions/dea.R")
+
+# DEAs of individual treatments: day 0
+for(i in 1:length(mirna)){
+  se.d0 <- DEA(se.d0, use=se.d0$miRNA %in% c(ctrl,mirna[i]), name=dea.names[i], model = ~miRNA, model0 = ~1)
+}
+
+# DEAs of individual treatments: day 1
+for(i in 1:length(mirna)){
+  se.d1 <- DEA(se.d1, use=se.d1$miRNA %in% c(ctrl,mirna[i]), name=dea.names[i], model = ~miRNA, model0 = ~1)
+}
+```
+
+## Heatmap
+
+```{r heatmap function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# heatmap function
+
+makeHM <- function(se, sig, nr=20, logcpm=FALSE){
+  for(i in sig){
+    if(sum(rowData(se)$DEA.all$FDR < i) > nr){
+      cat("FDR <", i, "\n")
+      # logFC heatmap
+      SEtools::sehm(se[,order(colData(se)$miRNA)], row.names(se)[rowData(se)$DEA.all$FDR < i], 
+                breaks=TRUE, do.scale = FALSE, show_colnames = FALSE, assayName = "log2FC", anno_columns = "miRNA")
+      # logcpm heatmap
+      if(logcpm){
+        SEtools::sehm(se[,order(colData(se)$miRNA)], row.names(se)[rowData(se)$DEA.all$FDR < i], 
+                breaks=TRUE, do.scale = TRUE, show_colnames = FALSE, assayName = "logcpm", anno_columns = "miRNA")
+      }
+      break
+    }
+  }
+}
+```
+
+```{r heatmap, message=FALSE, warning=FALSE, eval=TRUE}
+
+# allocation
+sig.lvl <- c(1e-5,1e-3,.05,.1,.5,.8)
+
+# heatmap of DEA.all: day 0
+makeHM(se.d0, sig.lvl, logcpm = TRUE)
+
+# heatmap of DEA.all: day 1
+makeHM(se.d1, sig.lvl, logcpm = TRUE)
+```
+
+## Export
+
+```{r dea export, warning=FALSE, message=FALSE, eval=TRUE}
+
+# round
+source("functions/roundSE.R")
+se.d0 <- roundSE(se.d0)
+se.d1 <- roundSE(se.d1)
+# export
+saveRDS(se.d0, "data/cherone.d0.DEA.SE.rds")
+saveRDS(se.d1, "data/cherone.d1.DEA.SE.rds")
+```
+
+```{r dea import, warning=FALSE, message=FALSE, eval=FALSE}
+
+# import
+se.d0 <- readRDS("data/cherone.d0.DEA.SE.rds")
+se.d1 <- readRDS("data/cherone.d1.DEA.SE.rds")
+```
+
+## Stats
+
+```{r dea stats, message=FALSE, warning=FALSE, eval=TRUE}
+
+# number of significant transcripts
+sapply(rowData(se.d0)[,grepl("DEA",colnames(rowData(se.d0)))], function(x) sum(x$FDR < .05) )
+sapply(rowData(se.d1)[,grepl("DEA",colnames(rowData(se.d1)))], function(x) sum(x$FDR < .05) )
+```
+
+### up-/downregulations at different significance levels
+
+```{r significance signs function, message=FALSE, warning=FALSE, eval=TRUE}
+
+# check number of positive & negative logFC for different significances
+
+sigsDF <- function(se, sig, dea, thr){
+  data.frame(sigLevel=rep(sig,3),
+             counts=c(sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == -1 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr)),
+                      sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == 0 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr)),
+                      sapply(sig, function(x) sum(sign(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) == 1 & 
+                                                    abs(assays(se[rowData(se)[[dea]]$FDR < x,])$log2FC) >= thr))
+                      ),
+             sign=c(rep("-1",length(sig)),
+                    rep("0",length(sig)),
+                    rep("1",length(sig))
+                    ),
+             dea=rep(dea,length(sig)*3)
+             )
+}
+```
+
+```{r significance signs, message=FALSE, warning=FALSE, eval=TRUE}
+
+# for each model & DEA: find number of down- & upregulations at different significance levels
+
+## significance levels of interest
+sig <- c(1e-10, 1e-5, .05, .1, .5, .8)
+## only absolute log2FC greater than this will be considered
+fc.thr <- .5
+
+## create dataframes with count informations
+### day 0 [model = ~miRNA, model0 = ~1]
+sigs.d0 <- lapply(grep("DEA",colnames(rowData(se.d0)),value=TRUE), function(x){
+  sigsDF(se.d0, sig, x, fc.thr)
+})
+sigs.d0 <- data.frame(do.call("rbind",sigs.d0))
+
+### day 1 [model = ~miRNA, model0 = ~1]
+sigs.d1 <- lapply(grep("DEA",colnames(rowData(se.d1)),value=TRUE), function(x){
+  sigsDF(se.d1, sig, x, fc.thr)
+})
+sigs.d1 <- data.frame(do.call("rbind",sigs.d1))
+```
+
+```{r significance signs plot, message=FALSE, warning=FALSE, fig.width=12, eval=TRUE}
+
+### day 0 [model = ~miRNA, model0 = ~1]
+ggplot(sigs.d0, aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea)
+
+### day 1 [model = ~miRNA, model0 = ~1]
+ggplot(sigs.d1, aes(x=as.factor(sigLevel), y=counts, fill=sign)) + geom_bar(position="dodge", stat="identity") + facet_wrap(~dea)
+```
+
+
