@@ -1,0 +1,25 @@
+---
+title: |  
+  | \vspace{3cm} \normalsize{Master Thesis}  
+  | \vspace{0.2cm} \huge{miRNA target enrichment benchmark and application to neuronal differentiation identify miRNAs putatively involved in maturation}  
+  | \vspace{2.5cm} \normalsize{Department of Systems Biology / D-BIOL, ETH Zürich}  
+  | \vspace{0.1cm} \normalsize{Laboratory of Systems Neuroscience, Schratt group}  
+subtitle: |  
+  | \vspace{.5cm} \normalsize{Dr. Germain, P.L., Laboratory of Systems Neuroscience, ETH Zürich, Main Supervisor}  
+  | \vspace{0.1cm} \normalsize{Prof. Dr. Schratt, G., Laboratory of Systems Neuroscience, ETH Zürich, Supervisor and Referee}  
+  | \vspace{0.1cm} \normalsize{Prof. Dr. Ciaudo, C., Inst. f. Molecular Health Sciences, ETH Zürich, Co-Referee}   
+  | \vspace{2cm} \normalsize{Submitted by:}  
+author: "Tomás Germade"
+date: "19.06.2020"
+output: pdf_document
+geometry: "left=2.5cm,right=2.5cm,top=3cm,bottom=3cm"
+documentclass: article
+header-includes:
+  - \usepackage{titling}
+  - \usepackage[export]{adjustbox}
+  - \pretitle{\begin{center}
+    \includegraphics[height=3cm, center]{pics/logos_combined.png}\LARGE\\}
+  - \posttitle{\end{center}}
+---
+
+\pagenumbering{gobble} 

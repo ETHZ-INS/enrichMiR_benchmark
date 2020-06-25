@@ -10,7 +10,7 @@ subtitle: |
   | \vspace{0.1cm} \normalsize{Prof. Dr. Ciaudo, C., Inst. f. Molecular Health Sciences, ETH Zürich, Co-Referee}   
   | \vspace{2cm} \normalsize{Submitted by:}  
 author: "Tomás Germade"
-date: "`r format(Sys.time(), '%d.%m.%Y')`"
+date: "19.06.2020"
 output:
   pdf_document:
     fig_caption: true
