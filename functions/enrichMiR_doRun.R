@@ -463,7 +463,7 @@ TPs <- c(
   miR.451a = "AACCGUU", "DKOvWT"="GCUACAU", "DKO"="GCUACAU", 
   "miR.138vNeg"="GCUGGUG", "miR.499vNeg"="UAAGACU", "miR.499"="UAAGACU", 
   "218DKOvWT"="UGUGCUU", "218DKO"="UGUGCUU",
-  "138DKOvWT"="CUAUUUC", "138DKO"="CUAUUUC"
+  "138DKOvWT"="GCUGGUG", "138DKO"="GCUGGUG"
   )
 
 allds=c("bartel.hela.DEA.SE.rds",
