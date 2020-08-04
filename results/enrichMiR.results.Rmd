@@ -46,7 +46,7 @@ suppressPackageStartupMessages({
 
 ```{r allocation}
 
-filedir <- "/mnt/schratt/tgermade_test/master_19_20/enrichMiR_benchmark/results3/"
+filedir <- "/mnt/schratt/tgermade_test/master_19_20/enrichMiR_benchmark/results/"
 
 # input files: Bartel DEA SE
 input <- list(
@@ -68,17 +68,17 @@ input <- list(
   
   amin=paste0(filedir, "amin.benchmark.rds"),
   amin.exon=paste0(filedir, "amin.exon.benchmark.rds"),
-  cherone.d0=paste0(filedir, "cherone.d0.benchmark.rds"),
-  cherone.d0.exon=paste0(filedir, "cherone.d0.exon.benchmark.rds"),
-  cherone.d1=paste0(filedir, "cherone.d1.benchmark.rds"),
-  cherone.d1.exon=paste0(filedir, "cherone.d1.exon.benchmark.rds"),
+  cherone.d0=paste0(filedir, "cherone.d0.benchmark2.rds"),
+  cherone.d0.exon=paste0(filedir, "cherone.d0.exon.benchmark2.rds"),
+  cherone.d1=paste0(filedir, "cherone.d1.benchmark2.rds"),
+  cherone.d1.exon=paste0(filedir, "cherone.d1.exon.benchmark2.rds"),
   
   amin.mirexpr=paste0(filedir, "amin.mirexpr.benchmark.rds"),
   amin.exon.mirexpr=paste0(filedir, "amin.exon.mirexpr.benchmark.rds"),
-  cherone.d0.mirexpr=paste0(filedir, "cherone.d0.mirexpr.benchmark2.rds"),
-  cherone.d0.exon.mirexpr=paste0(filedir, "cherone.d0.exon.mirexpr.benchmark2.rds"),
-  cherone.d1.mirexpr=paste0(filedir, "cherone.d1.mirexpr.benchmark2.rds"),
-  cherone.d1.exon.mirexpr=paste0(filedir, "cherone.d1.exon.mirexpr.benchmark2.rds")
+  cherone.d0.mirexpr=paste0(filedir, "cherone.d0.mirexpr.benchmark.rds"),
+  cherone.d0.exon.mirexpr=paste0(filedir, "cherone.d0.exon.mirexpr.benchmark.rds"),
+  cherone.d1.mirexpr=paste0(filedir, "cherone.d1.mirexpr.benchmark.rds"),
+  cherone.d1.exon.mirexpr=paste0(filedir, "cherone.d1.exon.mirexpr.benchmark.rds")
   )
 
 TPs <- c( 
@@ -200,7 +200,218 @@ df.mir <- df[df$mirexpr=="mirexpr" & df$exon.specific=="unseparated",]
 df.ex <- df[df$mirexpr=="no_mirexpr" & df$exon.specific=="exonic",]
 ```
 
-# Plots
+# Plots thesis
+
+## functions
+
+```{r libraries, message=FALSE, warning=FALSE, echo=FALSE}
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(plgINS)
+  library(DT)
+  library(viridis)
+  library(RColorBrewer)
+  library(data.table)
+  library(dplyr)
+  library(cowplot)
+  library(matrixStats)
+  library(RUVSeq)
+  library(ggrepel)
+  library(grid)
+  library(ComplexHeatmap)
+  library(kableExtra)
+})
+```
+
+```{r HM1 function, message=FALSE, warning=FALSE, echo=FALSE}
+# create heatmap matrix
+MHv1 <- function(df, metric="detPPV", form=method+is.bartel~prop, fn=mean, hm=c("1","2"), data.annotate=FALSE, name, ...){
+  
+  # reshape data
+  m <- reshape2::dcast(df, form=form, value.var=metric, na.rm=TRUE, fun.aggregate=fn)
+  
+  if(hm==1){
+    # generate matrix & annotations
+    ds <- as.character(m$dataset)
+    ds.bartel <- as.character(m$is.bartel)
+    names(ds) <- names(ds.bartel) <- rownames(m) <- m[,1]
+    m <- m[,-c(1:3)]
+    ds2 <- NULL
+    splt <- factor(ds.bartel, levels=c("bartel","other"))
+    lbl <- colnames(m)
+    
+  } else if(hm==2){
+    # generate matrix & annotations
+    l <- split(m, m$is.bartel)
+    m <- cbind(l$other[,-2],l$bartel[,-c(1:2)])
+    rownames(m) <- m[,1]
+    m <- m[,-1]
+    ds2 <- factor(c(rep("other",4),rep("bartel",4)), levels=c("other","bartel"))
+    splt <- NULL
+    lbl <- rep(colnames(m)[1:4],2)
+  }
+  
+  # heatmap
+  if(!data.annotate){
+    hm <- ComplexHeatmap::Heatmap(m, name=name, cluster_columns=FALSE, 
+                                rect_gp=gpar(col="white",lwd =.5),
+                                column_split=ds2, row_split=splt,
+                                column_title=levels(ds2),
+                                column_labels=lbl, 
+                                row_gap=unit(2,"mm"), 
+                                ...)
+    return(hm)
+    
+    } else {
+      hm2 <- ComplexHeatmap::Heatmap(ds, name="dataset", 
+                                   col=colors$dataset, 
+                                   ...)
+      return(hm2)
+    }
+}
+```
+
+```{r HM2 function, message=FALSE, warning=FALSE, echo=FALSE}
+
+# create heatmap matrix
+MHv2 <- function(df, metric="TP.atFDR05", form=treatment+dataset+sample+mirexpr~prop, fn=mean, data.annotate=FALSE, name=name, ...){
+  
+  # reshape data
+  m <- reshape2::dcast(df, form=form, value.var=metric, na.rm=TRUE, fun.aggregate=fn)
+  
+  # allocation
+  if(any(grepl("mirexpr",as.character(form)))){
+    feature <- "mirexpr"
+    lvls <- c("no_mirexpr","mirexpr")
+  } else {
+    feature <- "exon.specific"
+    lvls <- c("unseparated","exonic")
+  }
+  
+  # generate matrix & annotations
+  l <- split(m, m[[feature]])
+  l <- lapply(l, function(x) aggregate(x[,-c(1:4)], by=list(x[,1],x[,2]), FUN="mean"))
+  m <- cbind(l[[lvls[1]]][,-2],l[[lvls[2]]][,-c(1:2)])
+  ds <- as.character(l[[lvls[1]]]$Group.2)  
+  ds.bartel <- sapply(ds, function(x) if(x=="bartel") "bartel" else "other")
+  names(ds) <- names(ds.bartel) <- rownames(m) <- m$Group.1
+  m <- m[,-1]
+  ds2 <- factor(c(rep(lvls[[1]],4),rep(lvls[[2]],4)), levels=lvls)
+  
+  if(any(grepl("mirexpr",as.character(form)))){
+    ha <- HeatmapAnnotation(mir=ds2, col=colors, annotation_legend_param=list(title=feature),
+                          show_annotation_name=FALSE)
+  } else {
+    ha <- HeatmapAnnotation(ex=ds2, col=colors, annotation_legend_param=list(title=feature),
+                          show_annotation_name=FALSE)
+  }
+  
+  # heatmap
+  if(!data.annotate){
+  hm <- ComplexHeatmap::Heatmap(m, name=name, cluster_columns=FALSE, rect_gp=gpar(col="white",lwd =.5),
+                               column_split=ds2, 
+                               row_split=factor(ds.bartel, levels=c("bartel","other")),
+                               column_labels=rep(colnames(m)[1:4],2), 
+                               column_title=metric,
+                               row_gap=unit(2,"mm"), column_gap=unit(2,"mm"), 
+                               top_annotation=ha, ...)
+  return(hm)
+  
+  } else {
+    hm2 <- ComplexHeatmap::Heatmap(ds, name="dataset", col=colors$dataset, ...)
+    return(hm2)
+  }
+}
+```
+
+```{r pval function, message=FALSE, warning=FALSE, echo=FALSE}
+
+# function to do lin-reg
+getPval <- function(form, df, dset, opt=c("mir","ex")){
+  if(!missing(dset)){
+    pvals <- summary(lm(form, data=subset(df, dataset==dset), na.action=na.exclude))
+  } else {
+    pvals <- summary(lm(form, data=df, na.action=na.exclude))
+  }
+  if(opt=="mir"){
+    p <- pvals$coefficients["mirexprmirexpr","Pr(>|t|)"]
+  } else {
+    p <- pvals$coefficients["exon.specificexonic","Pr(>|t|)"]
+  }
+  #names(p) <- opt
+  if(is.na(p)){
+    return(1)
+  } else {
+    return(p)
+  }
+}
+```
+
+```{r round function, message=FALSE, warning=FALSE, echo=FALSE}
+
+# function to round numeric dataframe columns
+doRound <- function(df){
+  for(i in 1:ncol(df)){ 
+    if(is.numeric(df[,i])){
+      df[,i] <- plgINS::dround(df[,i], roundGreaterThan1=TRUE)
+      }
+    }
+  return(df)
+}
+```
+
+## Load
+
+```{r import df, echo=FALSE}
+
+df <- readRDS("../results/combined.benchmark.rds")
+e <- readRDS("../../iPSCdiff/enrichMiR/results/longRNA.mirexpr.enrichMiR.rds")
+TS <- readRDS("../data/TargetScan_human.rds")
+se <- readRDS("../../iPSCdiff/data/Long_RNA/longRNA.DEA.SE.rds")
+se.small <- readRDS("../../iPSCdiff/data/Small_RNA/smallRNA_oasis.DEA.SE.rds")
+
+for(i in colnames(rowData(se.small))){
+  rowData(se.small)[[i]] <- DataFrame(rowData(se.small)[[i]])
+}
+```
+
+## Prep
+
+```{r, echo=FALSE}
+
+# dataframe subsets
+df.std <- df[df$mirexpr=="no_mirexpr" & df$exon.specific=="unseparated",]
+df.mir <- df[df$mirexpr=="mirexpr" & df$exon.specific=="unseparated",]
+df.ex <- df[df$mirexpr=="no_mirexpr" & df$exon.specific=="exonic",]
+```
+
+```{r, echo=FALSE}
+
+# color palette dataset
+newCols <- colorRampPalette(grDevices::hcl.colors(length(unique(df$dataset)),palette = hcl.pals()[107]))
+cols.data <- newCols(length(unique(df$dataset)))
+names(cols.data) <- levels(df$dataset)
+# color palette method
+set.seed(111)
+colourCount = length(levels(df$method))
+getPalette = colorRampPalette(brewer.pal(9, "Set1")[-6])
+cols.method <- structure(sample(getPalette(colourCount)), names=levels(df$method))
+# color palette design
+cols.design <- structure(cols.method[c(4,5)], names=levels(df$design))
+# color palette mirexpr
+cols.mir <- structure(cols.design, names=levels(df$mirexpr))
+# color palette exon.specific
+cols.ex <- structure(cols.design, names=levels(df$exon.specific))
+
+colors <- list(dataset=cols.data, 
+               method=cols.method, 
+               design=cols.design,
+               mir=cols.mir, 
+               ex=cols.ex)
+```
+
+
+# Plots old
 
 ```{r}
 
