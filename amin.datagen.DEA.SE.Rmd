@@ -45,7 +45,7 @@ se <- readRDS("data/raw/amin.raw.SE.rds")
 
 # modify colData
 se$miRNA <- factor(c(rep("WT",2),rep("218DKO",2)))
-se$rep <- factor(c(1,2,2,3))
+se$rep <- factor(c(2,3,1,2))
 
 # filter raw data
 filter <- c(10,2)
