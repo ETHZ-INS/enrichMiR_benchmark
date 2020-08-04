@@ -17,9 +17,63 @@ Type 'q()' to quit R.
 
 [Previously saved workspace restored]
 
-> source("functions/enrichMiR_doRun.R"); doRun(allParams[[13]],cores=4,cleanRowNames=TRUE)
-Loading enrichMiR
+> source("functions/enrichMiR_doRun.R"); doRun(mirParams[[12]],cores=6,cleanRowNames=TRUE)LLoading enrichMiR
+WWarning message:
+replacing previous import ‘GenomicRanges::shift’ by ‘data.table::shift’ when loading ‘plgINS’   |                                                                              |                                                                      |   0  |                                                                              |============                                                          |  17%Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+  |                                                                              |=======================                                               |  33%Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+  |                                                                              |===================================                                   |  50%Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+  |                                                                              |===============================================                       |  67%Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+  |                                                                              |==========================================================            |  83%Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+  |                                                                              |======================================================================| 100%
+Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
 
+Using manually entered categories.
+Calculating the p-values...
+Using manually entered categories.
+Calculating the p-values...
+           used  (Mb) gc trigger  (Mb)  max used  (Mb)
+Ncells  9502824 507.6   16160774 863.1  16160774 863.1
+Vcells 19788729 151.0   58494278 446.3 114239033 871.6
 Warning message:
-replacing previous import ‘GenomicRanges::shift’ by ‘data.table::shift’ when loading ‘plgINS’ 
-  |                                                                              |                                                                      |   0%
+In fgsea(sets, fcs, nperm, minSize = minSize, maxSize = maxSize) :
+  There are ties in the preranked stats (0.03% of the list).
+The order of those tied genes will be arbitrary, which may produce unexpected results.
+> 
+> proc.time()
+    user   system  elapsed 
+6052.792 7040.411 2018.568 
+ 
+> proc.time()
+    user   system  elapsed 
+5930.737 7076.810 1997.934 
+57.551 
