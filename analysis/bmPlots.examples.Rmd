@@ -1,0 +1,115 @@
+---
+title: "bmPlots examples"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: 'cerulean'
+    highlight: 'tango'
+    df_print: paged
+---
+  
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(ggplot2)
+})
+```
+
+# Loading
+
+```{r}
+
+source("functions/bmPlots.R")
+```
+
+```{r}
+
+#df <- readRDS("../master_19_20/enrichMiR_benchmark/results/bartel.hek.benchmark.rds")
+df <- readRDS("../master_19_20/enrichMiR_benchmark/results/bartel.hela.benchmark.rds")
+```
+
+```{r}
+
+# if there are no TS permutations, the df would look like this
+df2 <- aggregate(df[,c("detPPV","FP.atFDR05","TP.atFDR05","log10QDiff","log10QrelIncrease","TP.atFDR05")], 
+                 by=df[,c("treatment","method")], FUN=mean)
+
+```
+
+# TP-FP plots
+
+## labels
+
+```{r, message=FALSE, warning=FALSE}
+
+TPvFP(df2)
+TPvFP(df2, label.all=TRUE)
+TPvFP(df2, labels=c("combFish.1","michael.down","modSites","modScore","combGeom.1"))
+```
+
+## Annotation library permutations
+
+```{r, message=FALSE, warning=FALSE}
+
+# without permutations:
+head(df2, 4)
+TPvFP(df2)
+
+# with permutations:
+head(df, 4)
+TPvFP(df, perm=TRUE)
+```
+
+## Automatic y axis adjustment
+
+```{r}
+
+TPvFP(df, perm=TRUE, full.scale=FALSE)
+```
+
+# Heatmaps
+
+## dimensions
+
+### 1D
+
+```{r, message=FALSE, warning=FALSE}
+
+HM(df2, form=method~1)
+```
+
+### 2D
+
+```{r, message=FALSE, warning=FALSE}
+
+HM(df2, metric="TP.atFDR05", form=method~treatment, cluster.cols=TRUE)
+```
+
+### 3D
+
+```{r, message=FALSE, warning=FALSE}
+
+hm1 <- HM(df[df$treatment==unique(df$treatment)[1],], column_title=unique(df$treatment)[1])
+hm2 <- HM(df[df$treatment==unique(df$treatment)[3],], column_title=unique(df$treatment)[3])
+ComplexHeatmap::draw(hm1 + hm2)
+```
+
+## exclusions
+
+```{r, message=FALSE, warning=FALSE}
+
+HM(df, metric="FP.atFDR05", form=method~prop, exclude=c("michael.up","EN.up","wEN.up","regmir.up","regmirb.up"))
+```
+

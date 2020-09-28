@@ -1,0 +1,141 @@
+---
+title: "showcasing enrichMiR functions"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Info
+
+Showcase of the following functions:  
+loadAll, cleanDEA, TSPerm, getEnrichMiR, combineTests and getBench inside *runEnrichMiR.R* (to run enrichMiR tests)  
+getBench inside *runBenchmark.R* (to analyse enrichMiR results)  
+completeEnrichMiR inside *completeEnrichMiR.R* (a quick enrichMiR run based on above functions)  
+TPvFP and HM inside *bmPlots.R* (to plot metrics after analysis)  
+
+All functions except for the ones used for plotting are based on the enrichMiR branch *freeze20200803*.  
+
+# Prep
+
+```{r}
+
+## set number of replicates per permutation proportion
+nrep <- 3
+names(i) <- i <- 1:nrep
+props <- unlist(lapply( c("20"=0.2, "35"=0.35, "50"=0.5), 
+                        FUN=function(x) lapply(i, FUN=function(y) x)))
+
+
+TPs <- c( 
+  miR.122 = "GGAGUGU", miR.133 = "UGGUCCC", miR.138 = "GCUGGUG", 
+  miR.145 = "UCCAGUU", miR.184 = "GGACGGA", miR.190a = "GAUAUGU", 
+  miR.200b = "AAUACUG", miR.216a = "AAUCUCA", miR.217 = "ACUGCAU", 
+  miR.219a = "GAUUGUC", miR.375 = "UUGUUCG", miR.451a = "AACCGUU"
+  )
+
+TP <- c(miR.122="hsa-miR-122-5p")
+
+p <- list(
+  dea="../master_19_20/enrichMiR_benchmark/data/bartel.hek.DEA.SE.rds",
+  ann="../master_19_20/enrichMiR_benchmark/data/TargetScan_human.rds",
+  tp=TPs,
+  tests=c("sitemir","wo","modscore","ks2","regmirb","areamir"),
+  mirnas=NULL,
+  perm=TRUE,
+  props=props
+)
+```
+
+# complete run
+
+```{r}
+
+source("functions/completeEnrichMiR.R")
+
+bm.df <- completeEnrichMiR(p)
+```
+
+```{r}
+
+source("functions/bmPlots.R")
+
+sub.df <- bm.df[!grepl(".up", bm.df$method),]
+
+TPvFP(sub.df, label.all=TRUE)
+HM(sub.df, form=method~treatment, cluster.cols=TRUE)
+```
+
+
+
+# individual runs
+
+```{r}
+
+source("functions/runEnrichMiR.R")
+
+# extract DEAs from SE rowData and load annotation
+p <- loadAll(p)
+```
+
+```{r}
+
+# clean up DEA lists
+p <- cleanDEA(p)
+```
+
+```{r}
+
+# generate annotation library permutations based on props
+p <- TSPerm(p)
+```
+
+```{r}
+
+# run enrichMiR
+e.list <- getEnrichMiR(p, cores=1)
+#e.list <- readRDS("e.list.rds")
+```
+
+```{r}
+
+test.list <- combineTests(e.list, tests=NULL, fisher.agg=TRUE, geom.agg=TRUE)
+```
+
+```{r}
+
+source("functions/runBenchmark.R")
+
+bm.df <- getBench(test.list, p$tp, p$perm)
+```
+
+```{r}
+
+source("functions/bmPlots.R")
+
+sub.df <- bm.df[!grepl(".up", bm.df$method),]
+
+TPvFP(sub.df, label.all=TRUE)
+HM(sub.df, form=method~treatment, cluster.cols=TRUE)
+```
+

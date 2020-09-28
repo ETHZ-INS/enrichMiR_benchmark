@@ -1,0 +1,205 @@
+---
+title: "tx-level enrichMiR run"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+
+Dataset: Bartel, miR-122, quant: Salmon (*/mnt/schratt/enrichMir_datasets/bartel.salmon/DEAs.shrinked.rds*)  
+Annotation: scanMiR, 8mer & 7mer (*/mnt/schratt/miRNA_KD/EnrichMir_Work/Aggregate_ms/hsa.utrs.agg_pl.fst*)  
+EnrichMiR: version freeze (old version) (git *ETHZ-INS/enrichMiR* branch *freeze20200803*)  
+
+
+# Load Annotation
+
+```{r, eval=FALSE}
+devtools::load_all("/mnt/schratt/tgermade_test/master_19_20/enrichMiR/enrichMiR/")
+source("/mnt/schratt/tgermade_test/hiwi_20/scanMiR/scanMiR/R/IndexedFst.R")
+library(fst)
+
+f <- loadIndexedFst("/mnt/schratt/miRNA_KD/EnrichMir_Work/Aggregate_fg/hsa.utrs.agg_bartel.fst")
+
+#devtools::load_all("/mnt/schratt/tgermade_test/hiwi_20/enrichMiR.vfreeze/enrichMiR/")
+#f <- loadIndexedFst("/mnt/schratt/miRNA_KD/EnrichMir_Work/Aggregate_ms/hsa.utrs.agg_pl.fst")
+```
+
+# Prep: Annotation & DEA
+
+```{r, eval=FALSE}
+# save new annotation as reduced data.table
+ann <- as.data.table(as.data.frame(f))
+ann <- ann[ann$n.8mer>0 | ann$n.7merm8>0 | ann$n.7merA1>0,]
+
+# load & process salmon dea
+deas <- readRDS("/mnt/schratt/enrichMir_datasets/bartel.salmon/DEAs.shrinked.rds")
+DEA <- deas$miR122
+rownames(DEA) <- sapply(strsplit(row.names(DEA), "\\."), FUN=function(x) x[1])
+
+# parsing
+# TS <- ann 
+# names(TS)[2] <- "family"
+# names(TS)[1] <- "feature"
+# names(TS)[8] <- "score"
+# TS$sites <- TS$n.8mer + TS$n.7merm8 + TS$n.7merA1
+
+names(DEA)[2] <- "logFC"
+names(DEA)[4] <- "PValue"
+names(DEA)[5] <- "FDR"
+# there can't be any NA FDRs for the regmir test!
+DEA$FDR[is.na(DEA$FDR)] <- 1
+```
+
+
+```{r}
+ann <- ann[ann$n.8mer>0,]
+ann <- ann[1:10000,]
+a <- lapply(unique(ann$seed)[1:50], function(mir) if(nrow(ann[ann$seed==mir,])>=4) ann[ann$seed==mir,][1:4,])
+a <- dplyr::bind_rows(a)
+
+ann$sites <- ann$n.8mer + ann$n.7merm8 + ann$n.7merA1
+families <- rownames(DEA)
+
+
+dea <- DEA[unique(a$transcript),]
+fam <- rownames(dea)
+# 
+# library(SummarizedExperiment)
+# DEA <- readRDS("/mnt/schratt/tgermade_test/master_19_20/enrichMiR_benchmark/data/amin.DEA.SE.rds")
+# DEA <- rowData(DEA)$DEA.all
+# rownames(DEA) <- sapply(rownames(DEA), function(x) paste(strsplit(x, "\\.")[[1]][-1], sep="."))
+# TS <- readRDS("/mnt/schratt/tgermade_test/master_19_20/enrichMiR_benchmark/data/TargetScan_mouse.rds")
+
+e <- enrichMiR(DEA, as.data.frame(ann), families=families, tests=tests)
+
+e <- enrichMiR(dea, as.data.frame(a), families=fam, tests=tests)
+
+# when i do enrichMiR with tests=c("areamir","regmir","regmirb") then it works
+```
+
+
+# Testing enrichMiR tests
+
+```{r, eval=FALSE}
+th.abs.logFC=0
+th.FDR=0.05
+down <- signal <- .dea2binary(DEA, th=th.FDR, th.alfc=th.abs.logFC, restrictSign=-1)
+```
+
+```{r, eval=FALSE}
+source("../hiwi_20/enrichMiR.vfreeze/enrichMiR/R/tests.R")
+
+# dea + annotation tests
+ks <- KS(DEA,TS)
+ks2 <- KS2(DEA,TS)
+mw <- MW(DEA,TS)
+gs <- gsea(DEA,TS)
+
+# signal tests
+ea <- EA(signal,TS)
+wea <- wEA(signal,TS)
+michael <- siteMir(signal,as.data.frame(TS))
+
+# score tests
+modSites <- plMod(DEA, TS, minSize, var="sites", correctForLength=T) 
+modScore <- plMod(DEA, TS, minSize, var="score", correctForLength=F) 
+area <- aREAmir(DEA, TS)
+area2 <- aREAmir(DEA, TS, pleiotropy=FALSE) 
+regb <- regmir(signal, TS)
+reg <- regmir(signal, TS, binary = F)
+
+# l contains modSites, modScore & areamir2 results
+l <- readRDS("temp.rds")
+
+# correct the regmir rownames
+rownames(reg) <- gsub("\\.","-",rownames(reg))
+rownames(regb) <- gsub("\\.","-",rownames(regb))
+```
+
+```{r, eval=FALSE}
+
+# combine all results into an enrichMiR object
+miR.122 <- new("enrichMiR", DEA=DEA, TS=TS, families="NULL", miRNA.expression=list(), info=list(call=match.call()))
+
+miR.122@res$KS <- ks
+miR.122@res$KS2 <- ks2
+miR.122@res$MW <- mw
+miR.122@res$GSEA <- gs
+miR.122@res$EN.down <- ea
+miR.122@res$wEN.down <- wea
+miR.122@res$siteMir.down <- michael
+miR.122@res$modSites <- l$modSites
+miR.122@res$modScore <- l$modScore
+miR.122@res$aREAmir <- area
+miR.122@res$aREAmir2 <- l$area2
+miR.122@res$regmir.down <- reg
+miR.122@res$regmirb.down <- regb
+
+e.list <- list(miR.122=miR.122)
+
+# generate aggregated results
+source("functions/runEnrichMiR.R")
+e.list <- combineTests(e.list, tests=NULL, fisher.agg=TRUE, geom.agg=TRUE)
+
+```
+
+```{r, eval=FALSE}
+saveRDS(e.list, "results2/miR122.enrichMiR.tx.rds")
+```
+
+# Benchmark & Plots
+
+```{r, eval=FALSE}
+TP <- c(miR.122="hsa-miR-122-5p")
+source("functions/runBenchmark.R")
+bm.df <- getBench(e.list, TP, FALSE)
+```
+
+```{r, eval=FALSE}
+saveRDS(bm.df, "results2/miR122.benchmark.tx.rds")
+```
+
+```{r}
+bm.df <- readRDS("results2/miR122.benchmark.tx.rds")
+```
+
+```{r, warning=FALSE, message=FALSE}
+
+source("functions/bmPlots.R")
+TPvFP(bm.df, label.all=TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE, fig.width=3.5}
+
+HM(bm.df, form=method~1)
+HM(bm.df, metric="log10QDiff", form=method~1)
+```
+
+Whole table sorted by FPs:  
+
+```{r, warning=FALSE, message=FALSE}
+
+bm.df[order(bm.df$FP.atFDR05),]
+```

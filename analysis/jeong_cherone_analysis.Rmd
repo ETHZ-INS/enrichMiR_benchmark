@@ -1,0 +1,531 @@
+---
+title: "analysis of Jeong & Cherone datasets"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE}
+suppressPackageStartupMessages({
+  library(ggplot2)
+  library(SummarizedExperiment)
+  library(plgINS)
+  library(viridis)
+  library(RColorBrewer)
+  library(dplyr)
+  library(cowplot)
+  library(ggrepel)
+})
+```
+
+# Functions
+
+```{r df gen function}
+
+targetFCs <- function(se, TS, seed, pertname){
+  # find target genes
+  TS$sites <- round(TS$sites)
+  TS.target <- TS[TS$family==seed,]
+  # generate df
+  m <- data.frame(log2FC=rowMeans(assays(se[,se$miRNA==pertname])$log2FC), 
+                  symbol=sapply(rownames(se), function(x) paste(unlist(strsplit(x, split="\\."))[-1], collapse=".") )
+                  )
+  m$cat <- factor( sapply(m$symbol, function(x) if(x %in% TS.target$feature) "target" else "nontarget") )
+  return(m)
+}
+```
+
+# Load
+
+```{r load}
+
+se.jeong <- readRDS("../master_19_20/enrichMiR_benchmark/data/jeong.DEA.SE.rds")
+TS.human <- readRDS("../master_19_20/enrichMiR_benchmark/data/TargetScan_human.rds")
+
+se.cherone.d0 <- readRDS("../master_19_20/enrichMiR_benchmark/data/cherone.d0.DEA.SE.rds")
+se.cherone.d1 <- readRDS("../master_19_20/enrichMiR_benchmark/data/cherone.d1.DEA.SE.rds")
+TS.mouse <- readRDS("../master_19_20/enrichMiR_benchmark/data/TargetScan_mouse.rds")
+
+se.amin <- readRDS("../master_19_20/enrichMiR_benchmark/data/amin.DEA.SE.rds")
+```
+
+# Jeong dataset
+
+## Prep
+
+```{r prep 1}
+
+seed.jeong <- "GCUACAU"
+m <- targetFCs(se.jeong, TS.human, seed.jeong, "DKO")
+```
+
+Comment: not all genes contained in TS.target are found inside the se object. This is probably due to the expression cutoffs that were performed when the se object was created.  
+
+## Stats
+
+```{r}
+
+table(m$cat)
+t.test(m$log2FC[m$cat=="target"], m$log2FC[m$cat!="target"], alternative = "greater")
+```
+
+Note: With this t-test we only check if we see larger values than H0 in the subset. This makes sense since all the datasets here are created by miRNA KO.  
+
+## Plots
+
+```{r histogram 1, message=FALSE, warning=FALSE}
+
+ggplot(m, aes(x=log2FC)) + geom_histogram(aes(fill=cat), alpha=0.5, binwidth=.08) + scale_x_continuous(limits = c(-2.5,2.5))
+```
+
+```{r density 1, message=FALSE, warning=FALSE}
+
+ggplot(m, aes(x=log2FC)) + geom_density(aes(fill=cat), alpha=0.5) + scale_x_continuous(limits = c(-2.5,2.5))
+```
+
+```{r ecd 1, message=FALSE, warning=FALSE}
+
+ggplot(m, aes(x=log2FC, colour=cat)) + stat_ecdf(size=1)
+```
+
+Summary: It doesn't seem like the log2FC distribution of targets and non-targets differ. 
+
+# Amin dataset (control)
+
+This is introduced as an example of how the distributions look like for a dataset with non-cero TP rates for many of the enrichMiR tests. This just serves as a reference.  
+
+## Prep
+
+```{r prep 3}
+
+seed.amin <- "UGUGCUU"
+m <- targetFCs(se.amin, TS.mouse, seed.amin, "218DKO")
+```
+
+## Stats
+
+```{r}
+
+table(m$cat)
+t.test(m$log2FC[m$cat=="target"], m$log2FC[m$cat!="target"], alternative = "greater")
+```
+
+## Plots
+
+```{r histogram 3, message=FALSE, warning=FALSE}
+
+ggplot(m, aes(x=log2FC)) + geom_histogram(aes(fill=cat), alpha=0.5, binwidth=.08) + scale_x_continuous(limits = c(-2.5,2.5))
+```
+
+```{r density 3, message=FALSE, warning=FALSE}
+
+ggplot(m, aes(x=log2FC)) + geom_density(aes(fill=cat), alpha=0.5) + scale_x_continuous(limits = c(-2.5,2.5))
+```
+
+```{r ecd 3, message=FALSE, warning=FALSE}
+
+ggplot(m, aes(x=log2FC, colour=cat)) + stat_ecdf(size=1)
+```
+
+# Cherone dataset (correction)
+
+In my thesis I used the sequence CUAUUUC (miR-138-2-3p) for the miR-138 perturbation in Cherone. I intended to correct this since I checked enrichMiR test ranks for all the possible seed sequences and only the GCUGGUG (miR-138-5p) gave sensible results. However, I mistakenly ran enrichMiR with unaltered variables. This mistake is now in the thesis. Here I compare the sensible results with those displayed in the thesis.  
+
+## Prep
+
+```{r allocation, message=FALSE, warning=FALSE}
+
+filedir <- "/mnt/schratt/tgermade_test/master_19_20/enrichMiR_benchmark/results/"
+
+# input files: Bartel DEA SE
+input <- list(
+  bartel.hek=paste0(filedir, "bartel.hek.benchmark.rds"),
+  bartel.hek.exon=paste0(filedir, "bartel.hek.exon.benchmark.rds"),
+  bartel.hela=paste0(filedir, "bartel.hela.benchmark.rds"),
+  bartel.hela.exon=paste0(filedir, "bartel.hela.exon.benchmark.rds"),
+  jeong=paste0(filedir, "jeong.benchmark.rds"),
+  jeong.exon=paste0(filedir, "jeong.exon.benchmark.rds"),
+  rat=paste0(filedir, "ratPolyA.benchmark.rds"),
+  rat.exon=paste0(filedir, "ratPolyA.exon.benchmark.rds"),
+  
+  bartel.hek.mirexpr=paste0(filedir, "bartel.hek.mirexpr.benchmark.rds"),
+  bartel.hek.exon.mirexpr=paste0(filedir, "bartel.hek.exon.mirexpr.benchmark.rds"),
+  bartel.hela.mirexpr=paste0(filedir, "bartel.hela.mirexpr.benchmark.rds"),
+  bartel.hela.exon.mirexpr=paste0(filedir, "bartel.hela.exon.mirexpr.benchmark.rds"),
+  rat.mirexpr=paste0(filedir, "ratPolyA.mirexpr.benchmark.rds"),
+  rat.exon.mirexpr=paste0(filedir, "ratPolyA.exon.mirexpr.benchmark.rds"),
+  
+  amin=paste0(filedir, "amin.benchmark.rds"),
+  amin.exon=paste0(filedir, "amin.exon.benchmark.rds"),
+  cherone.d0=paste0(filedir, "cherone.d0.benchmark2.rds"),
+  cherone.d0.exon=paste0(filedir, "cherone.d0.exon.benchmark2.rds"),
+  cherone.d1=paste0(filedir, "cherone.d1.benchmark2.rds"),
+  cherone.d1.exon=paste0(filedir, "cherone.d1.exon.benchmark2.rds"),
+  
+  amin.mirexpr=paste0(filedir, "amin.mirexpr.benchmark.rds"),
+  amin.exon.mirexpr=paste0(filedir, "amin.exon.mirexpr.benchmark.rds"),
+  cherone.d0.mirexpr=paste0(filedir, "cherone.d0.mirexpr.benchmark.rds"),
+  cherone.d0.exon.mirexpr=paste0(filedir, "cherone.d0.exon.mirexpr.benchmark.rds"),
+  cherone.d1.mirexpr=paste0(filedir, "cherone.d1.mirexpr.benchmark.rds"),
+  cherone.d1.exon.mirexpr=paste0(filedir, "cherone.d1.exon.mirexpr.benchmark.rds")
+  )
+
+TPs <- c( 
+  let.7a = "GAGGUAG", lsy.6 = "UUUGUAU", miR.1 = "GGAAUGU", miR.124 = "AAGGCAC", 
+  miR.137 = "UAUUGCU", miR.139 = "CUACAGU", miR.143 = "GAGAUGA", 
+  miR.144 = "ACAGUAU", miR.153 = "UGCAUAG", miR.155 = "UAAUGCU", 
+  miR.182 = "UUGGCAA", miR.199a = "CCAGUGU", miR.204 = "UCCCUUU", 
+  miR.205 = "CCUUCAU", miR.216b = "AAUCUCU", miR.223 = "GUCAGUU", 
+  miR.7 = "GGAAGAC", miR.122 = "GGAGUGU", miR.133 = "UGGUCCC", 
+  miR.138 = "GCUGGUG", miR.145 = "UCCAGUU", miR.184 = "GGACGGA", 
+  miR.190a = "GAUAUGU", miR.200b = "AAUACUG", miR.216a = "AAUCUCA", 
+  miR.217 = "ACUGCAU", miR.219a = "GAUUGUC", miR.375 = "UUGUUCG", 
+  miR.451a = "AACCGUU", "DKOvWT"="GCUACAU", "DKO"="GCUACAU", 
+  "miR.138vNeg"="GCUGGUG", "miR.499vNeg"="UAAGACU", "miR.499"="UAAGACU", 
+  "218DKOvWT"="UGUGCUU", "218DKO"="UGUGCUU",
+  "138DKOvWT"="GCUGGUG", "138DKO"="GCUGGUG"
+  )
+```
+
+```{r tp, message=FALSE, warning=FALSE}
+
+# import dataframes
+df.list <- lapply(input,readRDS)
+```
+
+```{r, message=FALSE, warning=FALSE}
+
+# combine dataframes
+df <- do.call("rbind", df.list)
+# add information
+df$sample <- sapply(strsplit(rownames(df),"\\."), function(x) paste(rev(rev(x)[-1]),collapse="."))
+df$dataset <- sapply(strsplit(df$sample,"\\."), function(x) x[1])
+df$organism <- sapply(df$dataset, function(x){
+  if(x=="bartel" | x=="jeong") "human"
+  else if(x=="rat") "rat"
+  else if(x=="amin" | x=="cherone" | x=="whipple") "mouse"
+})
+df$celltype <- sapply(df$sample, function(x){
+  if(grepl("hek",x)) "HEK293"
+  else if(grepl("hela",x)) "HeLa"
+  else if(grepl("jeong",x)) "SNU-638"
+  else if(grepl("rat",x)) "hippocampal_neurons/glia"
+  else if(grepl("in",x)) "induced_neurons"
+  else if(grepl("esc",x)) "ESC"
+  else if(grepl("amin",x)) "motoneurons"
+  else if(grepl("cherone",x)) "CAD"
+})
+df$miRNA <- sapply(1:nrow(df), function(i){
+  if(df$dataset[i]=="bartel") df$treatment[i]
+  else if(df$dataset[i]=="rat" & grepl("miR.138",df$treatment[i])) "miR.138"
+  else if(df$dataset[i]=="rat" & grepl("miR.499",df$treatment[i])) "miR.499"
+  else if(df$dataset[i]=="jeong") "miR.221/miR.222"
+  else if(df$dataset[i]=="amin") "miR.218"
+  else if(df$dataset[i]=="cherone") "miR.138"
+})
+df$seed <- sapply(df$treatment, function(x) TPs[x])
+df$design <- factor( sapply(df$dataset, function(x){
+  if(x=="bartel" | x=="rat") "transfection"
+  else if(x=="jeong" | x=="amin" | x=="cherone" | x=="whipple") "KO"
+  }), levels=c("transfection","KO") )
+df$exon.specific <- factor( sapply(df$sample, function(x) if(grepl("exon",x)) "exonic" else "unseparated"), levels=c("unseparated","exonic") )
+df$mirexpr <- factor( sapply(df$sample, function(x) if(grepl("mirexpr",x)) "mirexpr" else "no_mirexpr"), levels=c("no_mirexpr","mirexpr") )
+
+# we get rid of tests in the wrong direction with respect to intervention (mistake in amin dataset):
+df <- df[ (df$design=="transfection" & !grepl("\\.up",df$method)) | 
+          (df$design!="transfection" & df$dataset!="amin" & !grepl("\\.down",df$method)) |
+          (df$dataset=="amin" & !grepl("\\.up",df$method)), ]
+df$method <- gsub("\\.down|\\.up","",df$method)
+# get rid of NAs in detPPV
+df$detPPV[is.na(df$detPPV)] <- 0
+
+# correct some treatment names
+for(x in c("bartel","rat","cherone")){
+  df$treatment[df$dataset==x & df$miRNA=="miR.138"] <- paste0("miR.138.",x)
+}
+df$treatment[df$dataset=="jeong"] <- "miR.221/miR.222"
+df$treatment[df$treatment=="miR.499vNeg"] <- "miR.499"
+df$treatment[df$treatment %in% c("218DKOvWT","218DKO")] <- "miR.218"
+
+# mark bartel dataset
+for(x in unique(df$dataset)){
+  if(x=="bartel") df$is.bartel[df$dataset==x] <- "bartel" 
+  else df$is.bartel[df$dataset==x] <- "other"
+}
+
+# remove lsy.6 bartel
+df <- df[df$treatment!="lsy.6",]
+
+# convert columns to factors
+for(x in colnames(df)[-which(colnames(df) %in% c("detPPV","FP.atFDR05","log10QDiff","log10QrelIncrease","TP.atFDR05"))]){
+  df[[x]] <- as.factor(df[[x]])
+}
+
+# variables
+#dea.names <- as.character(unique(df$treatment))
+#props.all <- levels(df$prop)
+```
+
+```{r import old df, message=FALSE, warning=FALSE}
+
+df.old <- readRDS("../master_19_20/enrichMiR_benchmark/results/combined.benchmark.rds")
+```
+
+```{r, message=FALSE, warning=FALSE}
+
+# color palette dataset
+newCols <- colorRampPalette(grDevices::hcl.colors(length(unique(df$dataset)),palette = hcl.pals()[107]))
+cols.data <- newCols(length(unique(df$dataset)))
+names(cols.data) <- levels(df$dataset)
+# color palette method
+set.seed(111)
+colourCount = length(levels(df$method))
+getPalette = colorRampPalette(brewer.pal(9, "Set1")[-6])
+cols.method <- structure(sample(getPalette(colourCount)), names=levels(df$method))
+# color palette design
+cols.design <- structure(cols.method[c(4,5)], names=levels(df$design))
+# color palette mirexpr
+cols.mir <- structure(cols.design, names=levels(df$mirexpr))
+# color palette exon.specific
+cols.ex <- structure(cols.design, names=levels(df$exon.specific))
+
+colors <- list(dataset=cols.data, 
+               method=cols.method, 
+               design=cols.design,
+               mir=cols.mir, 
+               ex=cols.ex)
+```
+
+```{r, message=FALSE, warning=FALSE}
+
+DFaggregation <- function(df){
+  df.std <- df[df$mirexpr=="no_mirexpr" & df$exon.specific=="unseparated",]
+  ## get average number of FP & TP at FDR .05 for each combination of permutation & method & mirexpr
+  df.agg <- aggregate(df.std[,c("FP.atFDR05","TP.atFDR05")], by=df.std[,c("prop","method","dataset","sample","design")], FUN=mean)
+  df.agg$dataset <- as.character(df.agg$dataset)
+  df.agg$dataset[df.agg$sample=="bartel.hela"] <- as.character(df.agg$sample[df.agg$sample=="bartel.hela"])
+  df.agg$dataset[df.agg$sample=="bartel.hek"] <- as.character(df.agg$sample[df.agg$sample=="bartel.hek"])
+  df.agg$dataset <- factor(df.agg$dataset)
+  df.agg <- aggregate(df.agg[,c("FP.atFDR05","TP.atFDR05")], by=df.agg[,c("prop","method","dataset","design")], FUN=mean)
+  return(df.agg)
+}
+```
+
+```{r prep old}
+
+# "GGCUACU" is miR-138-1-3p. This isn't found in the TS.mouse
+
+# this is the seed we used (wrongly), miR-138-2-3p
+seed.cherone <- "CUAUUUC"
+
+d0 <- targetFCs(se.cherone.d0, TS.mouse, seed.cherone, "138DKO")
+d1 <- targetFCs(se.cherone.d1, TS.mouse, seed.cherone, "138DKO")
+
+before.corr <- gdata::combine(d0,d1)
+
+# this is miR-138-5p
+seed.cherone <- "GCUGGUG"
+
+d0 <- targetFCs(se.cherone.d0, TS.mouse, seed.cherone, "138DKO")
+d1 <- targetFCs(se.cherone.d1, TS.mouse, seed.cherone, "138DKO")
+
+after.corr <- gdata::combine(d0,d1)
+
+m <- gdata::combine(before.corr, after.corr)
+```
+
+## Stats 
+
+```{r}
+
+table(m$cat, m$source.1)
+```
+
+### before correction
+
+```{r}
+
+mbef <- m[m$source.1=="before.corr",]
+
+# d0
+t.test(mbef$log2FC[mbef$source=="d0" & mbef$cat=="target"], mbef$log2FC[mbef$source=="d0" & mbef$cat!="target"], alternative = "greater")
+# d1
+t.test(mbef$log2FC[mbef$source=="d1" & mbef$cat=="target"], mbef$log2FC[mbef$source=="d1" & mbef$cat!="target"], alternative = "greater")
+# combined
+t.test(mbef$log2FC[mbef$cat=="target"], mbef$log2FC[mbef$cat!="target"], alternative = "greater")
+```
+
+### after correction
+
+```{r}
+
+maft <- m[m$source.1=="after.corr",]
+
+# d0
+t.test(maft$log2FC[maft$source=="d0" & maft$cat=="target"], maft$log2FC[maft$source=="d0" & maft$cat!="target"], alternative = "greater")
+# d1
+t.test(maft$log2FC[maft$source=="d1" & maft$cat=="target"], maft$log2FC[maft$source=="d1" & maft$cat!="target"], alternative = "greater")
+# combined
+t.test(maft$log2FC[maft$cat=="target"], maft$log2FC[maft$cat!="target"], alternative = "greater")
+```
+
+## Plots
+
+### Histograms
+
+```{r histogram old, warning=FALSE, message=FALSE, fig.dim=c(8,6)}
+
+ggplot(m, aes(x=log2FC)) + geom_histogram(aes(fill=cat), alpha=0.5, binwidth=.08) + 
+  scale_x_continuous(limits = c(-2.5,2.5)) + facet_wrap(~source.1+source)
+```
+
+```{r density old, warning=FALSE, message=FALSE, fig.dim=c(8,6)}
+
+ggplot(m, aes(x=log2FC)) + geom_density(aes(fill=cat), alpha=0.5) + 
+  scale_x_continuous(limits = c(-2.5,2.5)) + facet_wrap(~source.1+source)
+```
+
+```{r ecd old, warning=FALSE, message=FALSE, fig.dim=c(8,6)}
+
+ggplot(m, aes(x=log2FC, colour=cat)) + stat_ecdf(size=1) + facet_wrap(~source.1+source)
+```
+
+### TP-FP plots
+
+enrichMiR test scores before and after correction of the Cherone results.  
+
+```{r}
+df.agg.old <- DFaggregation(df.old)
+df.agg.new <- DFaggregation(df)
+
+df.agg.cherone <- gdata::combine(df.agg.old[df.agg.old$dataset=="cherone",], 
+                                 df.agg.new[df.agg.new$dataset=="cherone",],
+                                 names=c("before.corr", "after.corr"))
+```
+
+```{r FIGURE_TP_FP_std old, message=FALSE, warning=FALSE, fig.dim=c(8,6), echo=FALSE, fig.align="center"}
+
+set.seed(123)
+ggplot(df.agg.old, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+  geom_line() + 
+  #guides(color=FALSE) +
+  geom_point(size=2.5) + 
+  geom_label_repel(data=subset(df.agg.old, method %in% c("combFish.1","michael", "modSites",
+                                                          "modScore","combGeom.1")) 
+                   %>% filter(prop=="original"), 
+                  aes(label=method), 
+                  force=20, 
+                  size=2.8,
+                  ylim=c(.05,.95), xlim=c(1,15),
+                  segment.color="black",
+                  segment.alpha=.2, 
+                  arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last"),
+                  box.padding = unit(.55, "lines"),
+                  point.padding = unit(.45, 'lines'),
+                  nudge_y=-.2, nudge_x=3
+                  ) +
+  geom_point() +
+  scale_color_manual(values = colors$method) +
+  facet_wrap(design~dataset) + 
+  scale_x_sqrt() +
+  theme_cowplot() +
+  theme(panel.border=element_rect(colour = "grey35", fill = NA),
+        panel.grid.major=element_line(colour = "grey85"), 
+        axis.line=element_blank(),
+        strip.background=element_rect(colour = "grey35"),
+        axis.ticks=element_line(colour = "grey35"),
+        text = element_text(size=10), axis.text = element_text(size=9)
+        )
+```
+
+```{r FIGURE_TP_FP_std new, message=FALSE, warning=FALSE, fig.dim=c(8,6), echo=FALSE, fig.align="center"}
+
+set.seed(123)
+ggplot(df.agg.new, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+  geom_line() + 
+  #guides(color=FALSE) +
+  geom_point(size=2.5) + 
+  geom_label_repel(data=subset(df.agg.new, method %in% c("combFish.1","michael", "modSites",
+                                                          "modScore","combGeom.1")) 
+                   %>% filter(prop=="original"), 
+                  aes(label=method), 
+                  force=20, 
+                  size=2.8,
+                  ylim=c(.05,.95), xlim=c(1,15),
+                  segment.color="black",
+                  segment.alpha=.2, 
+                  arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last"),
+                  box.padding = unit(.55, "lines"),
+                  point.padding = unit(.45, 'lines'),
+                  nudge_y=-.2, nudge_x=3
+                  ) +
+  geom_point() +
+  scale_color_manual(values = colors$method) +
+  facet_wrap(design~dataset) + 
+  scale_x_sqrt() +
+  theme_cowplot() +
+  theme(panel.border=element_rect(colour = "grey35", fill = NA),
+        panel.grid.major=element_line(colour = "grey85"), 
+        axis.line=element_blank(),
+        strip.background=element_rect(colour = "grey35"),
+        axis.ticks=element_line(colour = "grey35"),
+        text = element_text(size=10), axis.text = element_text(size=9)
+        )
+```
+
+```{r FIGURE_TP_FP_std_cherone, message=FALSE, warning=FALSE, fig.dim=c(8,5), echo=FALSE, fig.align="center"}
+
+set.seed(123)
+ggplot(df.agg.cherone, aes(x=FP.atFDR05, y=TP.atFDR05, color=method, shape=prop, group=method)) + 
+  geom_line() + 
+  #guides(color=FALSE) +
+  geom_point(size=2.5) + 
+  geom_label_repel(data=subset(df.agg.cherone, method %in% c("combFish.1","michael", 
+                                                             "modSites","modScore","combGeom.1")) 
+                   %>% filter(prop=="original"), 
+                  aes(label=method), 
+                  force=20, 
+                  size=2.8,
+                  ylim=c(.05,.95), xlim=c(1,9),
+                  segment.color="black",
+                  segment.alpha=.2, 
+                  arrow=arrow(length = unit(0,"npc"), type = "open", ends = "last"),
+                  box.padding = unit(.55, "lines"),
+                  point.padding = unit(.45, 'lines'),
+                  nudge_y=.15
+                  ) +
+  geom_point() +
+  scale_color_manual(values = colors$method) +
+  facet_wrap(~source) +
+  scale_x_sqrt() +
+  theme_cowplot() +
+  theme(panel.border=element_rect(colour = "grey35", fill = NA),
+        panel.grid.major=element_line(colour = "grey85"), 
+        axis.line=element_blank(),
+        strip.background=element_rect(colour = "grey35"),
+        axis.ticks=element_line(colour = "grey35"),
+        text = element_text(size=10), axis.text = element_text(size=9)
+        )
+```
+
+Summary: The number of targets is much higher after correction. The log2FC distributions of targets vs. non-targets seems to be mostly identical. When looking at the density plots it looks like at d1 (after correction) there is a small subset of targets that does show a lower average log2FC. After correction we are able to detect the True seed in some cases with the following enrichMiR tests: *combFish.1*, *combGeom.1*, *modSites*, *modScore*.  
