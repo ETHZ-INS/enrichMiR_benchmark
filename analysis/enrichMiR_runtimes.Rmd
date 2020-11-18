@@ -1,0 +1,225 @@
+---
+title: "Analysis of enrichMiR test runtimes"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(ggplot2)
+})
+```
+
+# Load
+
+```{r}
+nf <- list.files("../results_runtime", pattern=".runtimes.rds", full.names=TRUE)
+nf <- nf[!grepl("plmod|combined",nf)]
+rts <- lapply(nf, readRDS)
+nd <- sapply(nf, function(x){
+  gsub(".runtimes.rds","",rev(strsplit(x, "\\/")[[1]])[1])
+})
+names(rts) <- nd
+rts <- lapply(rts, as.data.frame)
+```
+
+# Prep  
+
+```{r, eval=FALSE}
+# save plMod tests (modScore & modSites) before speedup:
+plmod.old <- lapply(rts, function(x) x[c("modscore","modsites"),])
+saveRDS(plmod.old, "../results_runtime/plmod.old.runtimes.rds")
+```
+
+```{r}
+plmod.new <- readRDS("../results_runtime/plmod.new.runtimes.rds")
+plmod.old <- readRDS("../results_runtime/plmod.old.runtimes.rds")
+for(i in nd){
+  rts[[i]] <- rts[[i]][!rownames(rts[[i]]) %in% c("modscore","modsites"),]
+  rownames(plmod.new[[i]]) <- paste0(rownames(plmod.new[[i]]),".new")
+  rownames(plmod.old[[i]]) <- paste0(rownames(plmod.old[[i]]),".old")
+  rts[[i]] <- rbind(rbind(rts[[i]],plmod.old[[i]]), plmod.new[[i]])
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(rts,"../results_runtime/combined.runtimes.rds")
+```
+
+# Analysis
+
+## All runtimes  
+
+The *amin* & *jeong* datasets contain 10 iterations, while the *bartel* datasets only contain results for the different experiments (only 1 iteration per experiment). Examples:  
+
+```{r}
+head(rts$amin,4)
+```
+
+```{r}
+head(rts$bartel.hek,4)
+```
+
+```{r}
+formDF <- function(l){
+  df <- as.data.frame(dplyr::bind_rows(l, .id="id"))
+  df2 <- stack(df[!colnames(df) %in% "id"])
+  df2$id <- factor(df$id)
+  df2$test <- factor(rownames(l[[1]]))
+  return(df2)
+}
+```
+
+```{r}
+df1 <- formDF(rts[nd[c(1,4)]])
+df2 <- formDF(rts[nd[-c(1,2,4)]])
+df3 <- formDF(rts[nd[-c(1,3,4)]])
+```
+
+```{r, warning=FALSE, message=FALSE}
+# combine runtimes of all datasets
+df <- rbind(df1,df2,df3)
+# plotting combined
+ggplot(df[!grepl(".old",df$test),], aes(test, values, fill=test)) + 
+  geom_boxplot(show.legend=FALSE) + xlab("runtime [s]") + coord_flip()
+```
+
+```{r, warning=FALSE, message=FALSE}
+# plotting by dataset
+ggplot(df[!grepl(".old",df$test),], aes(test, values, fill=test)) + 
+  geom_boxplot(show.legend=FALSE) + xlab("runtime [s]") + coord_flip() + 
+  facet_wrap(~id)
+```
+
+Mean runtimes per test (over all datasets & iterations) in seconds:   
+
+```{r}
+ag <- aggregate(df[,"values"], by=list(df[,"test"]), FUN=mean)
+nt <- ag[,1]
+ag <- ag[,-1]
+names(ag) <- nt
+round(ag,1)
+```
+
+## plmod comparison  
+
+```{r, warning=FALSE, message=FALSE}
+# plotting combined
+ggplot(df[grepl("mods",df$test),], aes(test, values, fill=test)) + 
+  geom_boxplot(show.legend=FALSE) + xlab("runtime [s]") + coord_flip()
+```
+
+```{r, warning=FALSE, message=FALSE}
+# plotting by dataset
+ggplot(df[grepl("mods",df$test),], aes(test, values, fill=test)) + 
+  geom_boxplot(show.legend=FALSE) + xlab("runtime [s]") + coord_flip() + 
+  facet_wrap(~id)
+```
+
+The runtime reduction from the new code is not as strong as expected. What could be the reason?  
+Here are the different functions that I ran (differences marked with hashes):  
+
+Old:  
+
+```{r plmod old}
+plMod <- function(signature, sets, var="sites", correctForLength=NULL){
+  if(is.null(correctForLength)) 
+    correctForLength <- (var=="sites" && 'sites' %in% colnames(sets))
+  if(correctForLength){
+    ag <- aggregate(sets$sites, by=list(feature=sets$feature), FUN=sum)
+    cfl <- ag[,2]
+    names(cfl) <- ag[,1]
+    cfl <- cfl[names(signature)]
+    cfl[which(is.na(cfl))] <- 0
+    names(cfl) <- names(signature)
+  }else{
+    cfl <- NULL
+  }
+  sets$family <- as.character(sets$set)
+  res <- as.data.frame(t(vapply(split(sets,sets$set), fcs=signature, cfl=cfl, 
+                  FUN.VALUE=numeric(2), FUN=function(x,fcs, minSize, cfl){
+                    x <- x[!duplicated(x),]
+                    row.names(x) <- x$feature
+                    x2 <- x[names(fcs),var]
+                    x2[which(is.na(x2))] <- 0
+                    if(is.null(cfl)){
+                      mod <- try(lm(fcs~x2+0),silent=T) ## <- changed
+                    }else{
+                      mod <- try(lm(fcs~x2+cfl+0),silent=T) ## <- changed
+                    }
+                    if(!is(mod,"try-error"))
+                      return(c(coef(mod)["x2"], summary(aov(mod))[[1]]["x2","Pr(>F)"])) ## <- changed
+                    return(rep(NA_real_,2))
+                  })))
+  colnames(res) <- c("coefficient","pvalue")
+  res$FDR <- p.adjust(res$pvalue)
+  res[order(res$FDR,res$pvalue),]
+}
+```
+
+New:  
+
+```{r plmod new}
+plMod <- function(signature, sets, var="sites", correctForLength=NULL){
+  if(is.null(correctForLength)) 
+    correctForLength <- (var=="sites" && 'sites' %in% colnames(sets))
+  if(correctForLength){
+    ag <- aggregate(sets$sites, by=list(feature=sets$feature), FUN=sum)
+    cfl <- ag[,2]
+    names(cfl) <- ag[,1]
+    cfl <- cfl[names(signature)]
+    cfl[which(is.na(cfl))] <- 0
+    names(cfl) <- names(signature)
+  }else{
+    cfl <- NULL
+  }
+  sets$family <- as.character(sets$set)
+  w <- NULL ## <- changed
+  res <- as.data.frame(t(vapply(split(sets,sets$set), fcs=signature, cfl=cfl, 
+                                FUN.VALUE=numeric(2), FUN=function(x, fcs, cfl){
+                                  x <- x[!duplicated(x),]
+                                  row.names(x) <- x$feature
+                                  x2 <- as.matrix(x[names(fcs),var])
+                                  x2[which(is.na(x2))] <- 0
+                                  if(!is.null(cfl)) x2 <- cbind(x2,cfl) ## <- changed
+                                  if(is.null(w)){
+                                    mod <- try(.lm.fit(x2, fcs), silent=TRUE) ## <- changed
+                                  }else{
+                                    mod <- try(lm.wfit(x2, fcs, w=w), silent=TRUE) ## <- changed
+                                  }
+                                  if(is(mod,"try-error")) return(rep(NA_real_,2))
+                                  c(mod$coefficients[1], tryCatch(.lm.pval(mod,w)[1], error=function(e) NA)) ## <- changed
+                                })))
+  colnames(res) <- c("coefficient","pvalue")
+  res$FDR <- p.adjust(res$pvalue)
+  res[order(res$FDR,res$pvalue),]
+}
+```
+
+
+
+
+
+
+

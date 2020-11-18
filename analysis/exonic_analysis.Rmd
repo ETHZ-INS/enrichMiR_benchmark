@@ -1,0 +1,122 @@
+---
+title: "Intron count analysis"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+suppressPackageStartupMessages({
+  library(SummarizedExperiment)
+  library(SEtools)
+  library(ggplot2)
+  library(plyr)
+})
+```
+
+```{r}
+# load
+n <- c("bartel.hek","bartel.hela","amin","ratPolyA","cherone.d0","cherone.d1","jeong")
+dea.files <- paste0("../master_19_20/enrichMiR_benchmark/data/",n,".exon.DEA.SE.rds")
+
+ses <- lapply(dea.files, readRDS)
+names(ses) <- n
+```
+
+```{r}
+
+ratios <- lapply(ses, function(se){
+  data.frame( 
+    ratio=as.vector(assay(se[,se$readtype=="unspliced"]) / assay(se[,se$readtype=="spliced"])) 
+    )
+})
+
+df <- dplyr::bind_rows(ratios, .id="id")
+df <- df[!is.na(df$ratio) & !is.infinite(df$ratio),]
+```
+
+```{r, message=FALSE, warning=FALSE}
+ggplot(df, aes(ratio, fill=id)) + geom_density(alpha=.6) + scale_x_log10()
+```
+
+It doesn't look like the ratPolyA dataset has lower ratios of unspliced transcripts. Because of the log transformation we can't see the difference in the number of ratios that are 0 (cases where there are 0 detected unspliced counts). Let's check the ratio of 0 values between the datasets.   
+
+```{r}
+sapply(unique(df$id), function(x) sum(df$ratio[df$id==x]==0)/nrow(df[df$id==x,]))
+```
+
+RatPolyA doesn't have a significantly higher number of 0 values for ratios. Is ratPolyA really the same as the others?   
+
+```{r}
+t.test(df$ratio[df$id=="ratPolyA"], df$ratio[df$id!="ratPolyA"], alternative="less")
+```
+
+The t-test finds a significantly lesser mean for ratPolyA. But the our ratios aren't normally distributed. As we see above, the log10 is much closer to being normally distributed, so let's test those values. Let's look at 2 variants to account for this:    
+
+```{r}
+df$log.ratio <- log10(df$ratio)
+df$log.ratio[is.infinite(df$log.ratio)] <- NA
+
+t.test(df$log.ratio[df$id=="ratPolyA"], df$log.ratio[df$id!="ratPolyA"], alternative="less",na.rm=T)
+```
+
+```{r}
+poisson.test(x=c(length(df$ratio[df$id!="ratPolyA"]), length(df$ratio[df$id=="ratPolyA"])),
+             T=c(sum(df$ratio[df$id!="ratPolyA"]), sum(df$ratio[df$id=="ratPolyA"])), 
+             alternative="less")
+```
+
+Both the log10 t.test and the poisson test agree that we have a smaller unspliced tx ratio in the ratPolyA dataset. We can't see it in the density plot since the values are automatically controlled for dataset size. It's better visible in a simple histogram:   
+
+```{r, message=FALSE, warning=FALSE}
+df2 <- df[df$ratio!=0,]
+means <- plyr::ddply(df2, "id", summarise, grp.mean=mean(ratio))
+
+ggplot(df, aes(ratio, fill=id)) + geom_histogram(alpha=.3, position="identity", bins=50) + scale_x_log10() #+
+  #geom_vline(data=means, aes(xintercept=log10(grp.mean), color=id), linetype="dashed")
+```
+
+And once more in the distribution values:  
+
+```{r, message=FALSE, warning=FALSE}
+df2 <- df[df$ratio!=0,]
+stats <- plyr::ddply(df2, "id", summarise, grp.len=length(ratio), grp.mean=mean(ratio), grp.sd=sd(ratio))
+error <- qnorm(0.975)*stats$grp.sd/sqrt(stats$grp.len)
+stats$confint.low <- stats$grp.mean-error
+stats$confint.high <- stats$grp.mean+error
+
+df2$id <- as.factor(df2$id)
+ggplot(stats, aes(id, grp.mean, fill=id)) + geom_bar(stat="identity") + coord_flip() +
+  geom_errorbar(aes(ymin=confint.low, ymax=confint.high), width=.2) + guides(fill=FALSE)
+```
+
+```{r}
+for(col in colnames(stats)){
+  if(is.numeric(stats[,col])){
+    stats[,col] <- round(stats[,col],2)
+  }
+}
+stats[order(stats$grp.mean),]
+```
+

@@ -1,0 +1,277 @@
+---
+title: "Analysis of enrichMiR tests requiring continuous signals"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Benchmark
+
+```{r, eval=FALSE}
+source("../functions/runBenchmark.R")
+
+TPs <- c( 
+  let.7a = "GAGGUAG", lsy.6 = "UUUGUAU", miR.1 = "GGAAUGU", miR.124 = "AAGGCAC", 
+  miR.137 = "UAUUGCU", miR.139 = "CUACAGU", miR.143 = "GAGAUGA", 
+  miR.144 = "ACAGUAU", miR.153 = "UGCAUAG", miR.155 = "UAAUGCU", 
+  miR.182 = "UUGGCAA", miR.199a = "CCAGUGU", miR.204 = "UCCCUUU", 
+  miR.205 = "CCUUCAU", miR.216b = "AAUCUCU", miR.223 = "GUCAGUU", 
+  miR.7 = "GGAAGAC", miR.122 = "GGAGUGU", miR.133 = "UGGUCCC", 
+  miR.138 = "GCUGGUG", miR.145 = "UCCAGUU", miR.184 = "GGACGGA", 
+  miR.190a = "GAUAUGU", miR.200b = "AAUACUG", miR.216a = "AAUCUCA", 
+  miR.217 = "ACUGCAU", miR.219a = "GAUUGUC", miR.375 = "UUGUUCG", 
+  miR.451a = "AACCGUU", "DKOvWT"="GCUACAU", "DKO"="GCUACAU", 
+  "miR.138vNeg"="GCUGGUG", "miR.499vNeg"="UAAGACU", "miR.499"="UAAGACU", 
+  "218DKOvWT"="UGUGCUU", "218DKO"="UGUGCUU",
+  "138DKOvWT"="GCUGGUG", "138DKO"="GCUGGUG"
+  )
+
+# do benchmark for all enrichMiR files previously generated
+for(f in list.files("../results", pattern = "enrichMiR.rds$")){
+  e.list <- readRDS(paste0("../results/",f))
+  tp <- TPs[names(e.list)]
+  bm <- getBench(e.list, tp)
+  saveRDS(bm, file=file.path("../results", gsub("enrichMiR","benchmark",f)) )
+}
+
+```
+
+# Allocation
+
+```{r}
+filedir <- "../results_continuous/"
+
+# input files: Bartel DEA SE
+input <- list(
+  bartel.hek=paste0(filedir, "bartel.hek.benchmark.rds"),
+  bartel.hek.exon=paste0(filedir, "bartel.hek.exon.benchmark.rds"),
+  bartel.hela=paste0(filedir, "bartel.hela.benchmark.rds"),
+  bartel.hela.exon=paste0(filedir, "bartel.hela.exon.benchmark.rds"),
+  jeong=paste0(filedir, "jeong.benchmark.rds"),
+  jeong.exon=paste0(filedir, "jeong.exon.benchmark.rds"),
+  rat=paste0(filedir, "ratPolyA.benchmark.rds"),
+  rat.exon=paste0(filedir, "ratPolyA.exon.benchmark.rds"),
+  
+  bartel.hek.mirexpr=paste0(filedir, "bartel.hek.mirexpr.benchmark.rds"),
+  bartel.hek.exon.mirexpr=paste0(filedir, "bartel.hek.exon.mirexpr.benchmark.rds"),
+  bartel.hela.mirexpr=paste0(filedir, "bartel.hela.mirexpr.benchmark.rds"),
+  bartel.hela.exon.mirexpr=paste0(filedir, "bartel.hela.exon.mirexpr.benchmark.rds"),
+  rat.mirexpr=paste0(filedir, "ratPolyA.mirexpr.benchmark.rds"),
+  rat.exon.mirexpr=paste0(filedir, "ratPolyA.exon.mirexpr.benchmark.rds"),
+  
+  amin=paste0(filedir, "amin.benchmark.rds"),
+  amin.exon=paste0(filedir, "amin.exon.benchmark.rds"),
+  cherone.d0=paste0(filedir, "cherone.d0.benchmark.rds"),
+  cherone.d0.exon=paste0(filedir, "cherone.d0.exon.benchmark.rds"),
+  cherone.d1=paste0(filedir, "cherone.d1.benchmark.rds"),
+  cherone.d1.exon=paste0(filedir, "cherone.d1.exon.benchmark.rds"),
+  
+  amin.mirexpr=paste0(filedir, "amin.mirexpr.benchmark.rds"),
+  amin.exon.mirexpr=paste0(filedir, "amin.exon.mirexpr.benchmark.rds"),
+  cherone.d0.mirexpr=paste0(filedir, "cherone.d0.mirexpr.benchmark.rds"),
+  cherone.d0.exon.mirexpr=paste0(filedir, "cherone.d0.exon.mirexpr.benchmark.rds"),
+  cherone.d1.mirexpr=paste0(filedir, "cherone.d1.mirexpr.benchmark.rds"),
+  cherone.d1.exon.mirexpr=paste0(filedir, "cherone.d1.exon.mirexpr.benchmark.rds")
+  )
+
+TPs <- c( 
+  let.7a = "GAGGUAG", lsy.6 = "UUUGUAU", miR.1 = "GGAAUGU", miR.124 = "AAGGCAC", 
+  miR.137 = "UAUUGCU", miR.139 = "CUACAGU", miR.143 = "GAGAUGA", 
+  miR.144 = "ACAGUAU", miR.153 = "UGCAUAG", miR.155 = "UAAUGCU", 
+  miR.182 = "UUGGCAA", miR.199a = "CCAGUGU", miR.204 = "UCCCUUU", 
+  miR.205 = "CCUUCAU", miR.216b = "AAUCUCU", miR.223 = "GUCAGUU", 
+  miR.7 = "GGAAGAC", miR.122 = "GGAGUGU", miR.133 = "UGGUCCC", 
+  miR.138 = "GCUGGUG", miR.145 = "UCCAGUU", miR.184 = "GGACGGA", 
+  miR.190a = "GAUAUGU", miR.200b = "AAUACUG", miR.216a = "AAUCUCA", 
+  miR.217 = "ACUGCAU", miR.219a = "GAUUGUC", miR.375 = "UUGUUCG", 
+  miR.451a = "AACCGUU", "DKOvWT"="GCUACAU", "DKO"="GCUACAU", 
+  "miR.138vNeg"="GCUGGUG", "miR.499vNeg"="UAAGACU", "miR.499"="UAAGACU", 
+  "218DKOvWT"="UGUGCUU", "218DKO"="UGUGCUU",
+  "138DKOvWT"="GCUGGUG", "138DKO"="GCUGGUG"
+  )
+```
+
+# Loading
+
+```{r}
+# import dataframes
+df.list <- lapply(input,readRDS)
+```
+
+# Prep
+
+```{r}
+# combine dataframes
+df <- do.call("rbind", df.list)
+# add information
+df$sample <- sapply(strsplit(rownames(df),"\\."), function(x) paste(rev(rev(x)[-1]),collapse="."))
+df$dataset <- sapply(strsplit(df$sample,"\\."), function(x) x[1])
+df$organism <- sapply(df$dataset, function(x){
+  if(x=="bartel" | x=="jeong") "human"
+  else if(x=="rat") "rat"
+  else if(x=="amin" | x=="cherone" | x=="whipple") "mouse"
+})
+df$celltype <- sapply(df$sample, function(x){
+  if(grepl("hek",x)) "HEK293"
+  else if(grepl("hela",x)) "HeLa"
+  else if(grepl("jeong",x)) "SNU-638"
+  else if(grepl("rat",x)) "hippocampal_neurons/glia"
+  else if(grepl("in",x)) "induced_neurons"
+  else if(grepl("esc",x)) "ESC"
+  else if(grepl("amin",x)) "motoneurons"
+  else if(grepl("cherone",x)) "CAD"
+})
+df$miRNA <- sapply(1:nrow(df), function(i){
+  if(df$dataset[i]=="bartel") df$treatment[i]
+  else if(df$dataset[i]=="rat" & grepl("miR.138",df$treatment[i])) "miR.138"
+  else if(df$dataset[i]=="rat" & grepl("miR.499",df$treatment[i])) "miR.499"
+  else if(df$dataset[i]=="jeong") "miR.221/miR.222"
+  else if(df$dataset[i]=="amin") "miR.218"
+  else if(df$dataset[i]=="cherone") "miR.138"
+})
+df$seed <- sapply(df$treatment, function(x) TPs[x])
+df$design <- factor( sapply(df$dataset, function(x){
+  if(x=="bartel" | x=="rat") "transfection"
+  else if(x=="jeong" | x=="amin" | x=="cherone" | x=="whipple") "KO"
+  }), levels=c("transfection","KO") )
+df$exon.specific <- factor( sapply(df$sample, function(x) if(grepl("exon",x)) "exonic" else "unseparated"), levels=c("unseparated","exonic") )
+df$mirexpr <- factor( sapply(df$sample, function(x) if(grepl("mirexpr",x)) "mirexpr" else "no_mirexpr"), levels=c("no_mirexpr","mirexpr") )
+
+# get rid of NAs in detPPV
+df$detPPV[is.na(df$detPPV)] <- 0
+
+# correct some treatment names
+for(x in c("bartel","rat","cherone")){
+  df$treatment[df$dataset==x & df$miRNA=="miR.138"] <- paste0("miR.138.",x)
+}
+df$treatment[df$dataset=="jeong"] <- "miR.221/miR.222"
+df$treatment[df$treatment=="miR.499vNeg"] <- "miR.499"
+df$treatment[df$treatment %in% c("218DKOvWT","218DKO")] <- "miR.218"
+
+# mark bartel dataset
+for(x in unique(df$dataset)){
+  if(x=="bartel") df$is.bartel[df$dataset==x] <- "bartel" 
+  else df$is.bartel[df$dataset==x] <- "other"
+}
+
+# remove lsy.6 bartel
+df <- df[df$treatment!="lsy.6",]
+
+# create new signal feature
+df$signal <- sapply(as.character(df$method), function(x) strsplit(x, "\\.")[[1]][2])
+
+# convert columns to factors
+for(x in colnames(df)[-which(colnames(df) %in% c("detPPV","FP.atFDR05","log10QDiff","log10QrelIncrease","TP.atFDR05"))]){
+  df[[x]] <- as.factor(df[[x]])
+}
+```
+
+```{r, eval=FALSE}
+saveRDS(df, "../results/combined.benchmark.rds")
+```
+
+# Results
+
+Results pertaining to methods ending in *.FC* are generated via  
+
+$signal=logFC$  
+
+Those ending in *.FDR* are generated via  
+
+$signal=sign(logFC) \cdot logFDR$  
+
+Here's a table of the methods and their respective signals we used previously in the tgermade thesis (*Previously used*), performed best within detPPV scores (*best (detPPV)*), performed best in terms of FPs (*best (FPs)*) and arguably performed best across the benchmark datasets (*best (datasets)*)
+
+| Test       |  Annotation input | Previously used signal | best (detPPV) | best (FPs) | best (datasets) |
+|------------|-------------------|------------------------|---------------|------------|-----------------|
+| aREAmir    |  scores           | signed logFDR | logFC | signed logFDR | logFC |
+| aREAmir2   |  scores           | signed logFDR | signed logFDR | logFC | signed logFDR |
+| modScore   |  scores           | logFC | logFC | logFC | logFC\* |
+| modSites   |  nb sites         | logFC | logFC | logFC | logFC\* |
+| KS         |  genesets         | logFC | signed logFDR | logFC | signed logFDR |
+| KS2        |  genesets         | logFC | logFC | logFC | depends on dataset\*\* |
+| MW         |  genesets         | logFC | signed logFDR | logFC | logFC |
+| GSEA       |  genesets         | logFC | signed logFDR | logFC | signed logFDR |
+
+All the best signals were assessed when looking at standard enrichMiR runs, i.e. without mirexpr or exon-specificity. When used with logFC, the *KS2* method gives a very large decrease in FPs.  
+\*These signals work best with a notable exception being the *Rat* dataset.  
+\*\*Here the best signal depends a lot on the dataset. For lower FPs use logFC. For higher TP rates use signed logFDR.
+
+```{r}
+source("../functions/bmPlots.R")
+```
+
+## TPvFP plots
+
+### combined std
+
+```{r tpfp 1a, fig.width=8, warning=FALSE, message=FALSE}
+df.std <- df[df$mirexpr=="no_mirexpr" & df$exon.specific=="unseparated",]
+TPvFP(df.std, label.all=TRUE)
+```
+
+### combined mirexpr
+
+```{r tpfp 1b, fig.width=8, fig.height=6, warning=FALSE, message=FALSE}
+df2 <- df
+df2$method <- factor(sapply(as.character(df$method), function(x) strsplit(x, "\\.")[[1]][1]))
+df.mir <- df2[df2$exon.specific=="unseparated",]
+TPvFP(df.mir, label.all=FALSE, features=c("mirexpr","signal"))
+```
+
+### combined exonic
+
+```{r tpfp 1c, fig.width=8, fig.height=6, warning=FALSE, message=FALSE}
+df.ex <- df2[df2$mirexpr=="no_mirexpr",]
+TPvFP(df.ex, label.all=FALSE, features=c("exon.specific","signal"))
+```
+
+### per dataset std
+
+```{r tpfp 2a, fig.width=10, fig.height=7, warning=FALSE, message=FALSE}
+TPvFP(df.std, labels=c("aREAmir2.FC","aREAmir2.FDR","GSEA.FC","GSEA.FDR"), features="dataset")
+```
+
+```{r tpfp 2b, fig.width=10, fig.height=7, warning=FALSE, message=FALSE}
+TPvFP(df.std, labels=c("KS2.FC","KS2.FDR","modScore.FC","modScore.FDR","modSites.FC","modSites.FDR"), features="dataset")
+```
+
+```{r tpfp 2c, fig.width=10, fig.height=7, warning=FALSE, message=FALSE}
+TPvFP(df.std, labels=c("aREAmir.FC","aREAmir.FDR","KS.FDR","KS.FC","MW.FC","MW.FDR"), features="dataset")
+```
+
+## detPPV Heatmap std
+
+```{r hm detppv, fig.width=5.5, fig.height=4.5, warning=FALSE, message=FALSE}
+hm1 <- HM(df.std, form=method~1, column_labels="combined")
+hm2 <- HM(df.std, form=method~dataset, cluster.cols=TRUE)
+ComplexHeatmap::draw(hm1 + hm2)
+```
+
+## FP Heatmap std
+
+```{r hm fp, fig.width=5.5, fig.height=4.5, warning=FALSE, message=FALSE}
+hm2 <- HM(df.std, metric="FP.atFDR05", form=method~dataset, cluster.cols=TRUE)
+hm1 <- HM(df.std, metric="FP.atFDR05", form=method~1, column_labels="combined")
+ComplexHeatmap::draw(hm1 + hm2)
+```

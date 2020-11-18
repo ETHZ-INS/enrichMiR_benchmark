@@ -1,0 +1,357 @@
+---
+title: "enrichMiR gsea variants"
+author: "tgermade"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+    highlight: tango
+    theme: cerulean
+    toc: yes
+    toc_float: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+---
+
+
+<style>
+  .main-container {
+    max-width: 1500px !important;
+  }
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# TLDR
+
+## Questions to be answered:  
+
+1a) Does a secondary *gsea* improve the scores we get from running an initial test on its own?  
+1b) If so, is any of those better than the original *gsea* (pure *gsea*)?  
+2) Are the findings consistent across datasets?  
+3) For continuous variable variants, is it better to use logFC or signed_logFDR values?  
+4a) Which variant performs best? OR Which variant to choose as default operation?  
+4b) For each test: Which variant performs best?   
+
+--> In other words: is it worth implementing a separate *gsea* variant based on any of the other tests? If so, which one?  
+
+## Spoilers:  
+
+1a) We get a decrease in sensitivity and an increase in specificity in all cases (see [here](#overview)).       
+1b) Yes, in every case except for the binary variables variant we get an improvement in both sensitivity and selectivity (see [here](#overview)).      
+2) In datasets *amin*, *jeong* and *cherone* we get no TPs for any of the tested variants including the pure *gsea* runs (see [here](#exceptions)). In the remaining datasets (*bartel*, *rat*) we do see some low TP rates.       
+3) We see an increase in both sensitivity and specificity when using logFC. When running pure *gsea*, we get fewer FPs when using signed_logFDR (see [here](#weights)).   
+4a) [*overlap (EN) cont_fc*](#default). *overlap* is currently our second fastest test after *areamir*.  
+4b) Check [this table](#top_vars).   
+
+# Prep
+
+```{r}
+regBench <- function(file, tps, do.sublist=FALSE, islist=FALSE){
+  source("../functions/runBenchmark.R")
+  res <- readRDS(file)
+  if(islist){
+    for(i in names(res)){
+      res[[i]] <- res[[i]][sapply(res[[i]], is.data.frame)]
+    } # careful with this line, I used this to get rid of pure string entries
+  }
+  if(do.sublist){
+    for(i in names(res)){
+      tmp <- res[[i]]
+      res[[i]] <- NULL
+      res[[i]]$gsea <- tmp
+      saveRDS(res, file)
+    }
+  }
+  # do benchmark
+  return( getBench(res, tps[names(res)], e.obj=FALSE) )
+}
+```
+
+```{r}
+TPs <- c( 
+  let.7a = "GAGGUAG", lsy.6 = "UUUGUAU", miR.1 = "GGAAUGU", miR.124 = "AAGGCAC", 
+  miR.137 = "UAUUGCU", miR.139 = "CUACAGU", miR.143 = "GAGAUGA", 
+  miR.144 = "ACAGUAU", miR.153 = "UGCAUAG", miR.155 = "UAAUGCU", 
+  miR.182 = "UUGGCAA", miR.199a = "CCAGUGU", miR.204 = "UCCCUUU", 
+  miR.205 = "CCUUCAU", miR.216b = "AAUCUCU", miR.223 = "GUCAGUU", 
+  miR.7 = "GGAAGAC", miR.122 = "GGAGUGU", miR.133 = "UGGUCCC", 
+  miR.138 = "GCUGGUG", miR.145 = "UCCAGUU", miR.184 = "GGACGGA", 
+  miR.190a = "GAUAUGU", miR.200b = "AAUACUG", miR.216a = "AAUCUCA", 
+  miR.217 = "ACUGCAU", miR.219a = "GAUUGUC", miR.375 = "UUGUUCG", 
+  miR.451a = "AACCGUU", "DKOvWT"="GCUACAU", "DKO"="GCUACAU", 
+  "miR.138vNeg"="GCUGGUG", "miR.499vNeg"="UAAGACU", "miR.499"="UAAGACU", 
+  "218DKOvWT"="UGUGCUU", "218DKO"="UGUGCUU",
+  "138DKOvWT"="GCUGGUG", "138DKO"="GCUGGUG"
+)
+```
+
+```{r}
+getBenchLists <- function(path, pattern=".regmir.", ...){
+  files <- list.files(path, pattern=pattern, full.names=TRUE)
+  d.list <- lapply(files, function(file) regBench(file, TPs, ...))
+  
+  n.files <- sapply(files, function(f){
+    if(grepl("bartel|cherone",f)){
+      n <- strsplit(rev(strsplit(f,split="\\/")[[1]]), split="\\.")[[1]][-3]
+    } else {
+      n <- strsplit(rev(strsplit(f,split="\\/")[[1]]), split="\\.")[[1]][-2]
+    }
+    paste(n, collapse=".")
+    })
+  names(d.list) <- n.files
+  return(d.list)
+}
+```
+
+```{r}
+toFactor <- function(x, col="method", islist=FALSE){
+  for(c in col){
+    if(islist){
+      for(i in names(x)){
+        x[[i]][[c]] <- as.factor(x[[i]][[c]])
+        x[[i]][[c]] <- droplevels(x[[i]][[c]])
+      }
+    } else {
+      x[[c]] <- as.factor(x[[c]])
+    }
+  }
+  return(x)
+}
+```
+
+```{r, warning=FALSE, message=FALSE}
+# load plmod test combinations
+d.list <- getBenchLists(path="../results_gsea/", pattern=".gsea.", islist=TRUE)
+d.list <- toFactor(d.list, islist=TRUE)
+# load plmod pure
+d.list2 <- getBenchLists(path="../results_gsea/gsea_pure/", pattern=".gsea.", do.sublist=FALSE)
+d.list2 <- toFactor(d.list2, islist=TRUE)
+```
+
+```{r, warning=FALSE, message=FALSE}
+df <- dplyr::bind_rows(d.list, .id="id")
+df <- df[!grepl("GSEA",df$method),]
+df <- toFactor(df, c("treatment","method"))
+df2 <- dplyr::bind_rows(d.list2, .id="id")
+df2 <- toFactor(df2, c("treatment","method"))
+```
+
+```{r}
+# add original test results
+originals <- c("../results/bartel.hek.benchmark.rds",
+               "../results/bartel.hela.benchmark.rds",
+               "../results/amin.benchmark.rds",
+               "../results/jeong.benchmark.rds",
+               "../results/ratPolyA.benchmark.rds",
+               "../results/cherone.d0.benchmark.rds",
+               "../results/cherone.d1.benchmark.rds")
+d.list3 <- lapply(originals,readRDS)
+names(d.list3) <- sapply(originals, function(x) rev(strsplit(x,split="\\/")[[1]])[1])
+df3 <- dplyr::bind_rows(d.list3, .id="id")
+df3 <- df3[df3$prop=="original",]
+df3$method <- factor(gsub("GSEA","gsea",df3$method))
+```
+
+```{r}
+# combine all benchmarks
+df <- rbind(df, df2, df3[,-c(3,10)])
+```
+
+```{r}
+# prep
+df$dataset <- "bartel.hela"
+df$dataset[grepl("bartel.hek",df$id)] <- "bartel.hek"
+df$dataset[grepl("amin",df$id)] <- "amin"
+df$dataset[grepl("jeong",df$id)] <- "jeong"
+df$dataset[grepl("ratPolyA",df$id)] <- "rat"
+df$dataset[grepl("cherone.d0",df$id)] <- "cherone.d0"
+df$dataset[grepl("cherone.d1",df$id)] <- "cherone.d1"
+df$mod.var <- sapply(df$id, function(x){
+  if(grepl("benchmark",x)){
+    "original"
+  } else {
+    if(grepl("bartel|cherone",x)){
+      strsplit(x, split="\\.")[[1]][3]
+    } else {
+      strsplit(x, split="\\.")[[1]][2]
+    }
+  }
+})
+
+w.up <- grepl("\\.up",df$method) 
+df <- df[!(w.up & df$dataset!="jeong"),]
+w.down <- grepl("\\.down",df$method)
+df <- df[!(w.down & df$dataset=="jeong"),]
+df$method <- gsub("\\.up","",gsub("\\.down","",df$method))
+```
+
+# Results
+
+```{r, warning=F,message=F}
+source("../functions/bmPlots.R")
+```
+
+![In all following instances *plmod* refers to pure *plmod* results (not *plmod* results with additional linear regression!).](../archive/plmod_explained.png){#id .class width=80% height=80%}  
+
+## Overview {#overview}
+
+```{r, warning=F,message=F, fig.width=9}
+# overview: compare new plmod to original tests
+TPvFP(df, features=c("mod.var"), labels="gsea")
+```
+
+## Each dataset separately {#exceptions}
+
+```{r, warning=F,message=F, fig.height=7, fig.width=9}
+# compare plmod variants
+TPvFP(df[grepl("bartel",df$dataset),], features=c("mod.var","dataset"), labels="gsea")
+```
+```{r, warning=F,message=F, fig.height=5, fig.width=9}
+TPvFP(df[grepl("amin",df$dataset),], features=c("mod.var","dataset"), labels="gsea")
+```
+```{r, warning=F,message=F, fig.height=5, fig.width=9}
+TPvFP(df[grepl("jeong",df$dataset),], features=c("mod.var","dataset"), labels="gsea")
+```
+```{r, warning=F,message=F, fig.height=5, fig.width=9}
+TPvFP(df[grepl("rat",df$dataset),], features=c("mod.var","dataset"), labels="gsea")
+```
+```{r, warning=F,message=F, fig.height=5, fig.width=9}
+TPvFP(df[grepl("cherone",df$dataset),], features=c("mod.var","dataset"), labels="gsea")
+```
+
+## Effect of signal type {#weights}
+
+Here the original test results (from thesis) are excluded.  
+
+```{r, warning=F,message=F, fig.width=9}
+# check effect of weights
+TPvFP(df[!df$mod.var %in% c("original","bin"),], label.all=TRUE, features=c("mod.var"))
+```
+
+## Top 10 % performing variants
+
+The higher the following ratios the better. They represent the combined rankings of TP and FP of *gsea* variants among the top 10%.  
+
+Note that we get the variants that contain the instances/tests with the highest TP & FP scores. We don't get the variants that get the best scores averaged over all instances.  
+
+### Variants
+
+```{r, warning=F,message=F}
+# rank plmod variants based on TP & FP
+ag <- aggregate(df[,c("FP.atFDR05","TP.atFDR05","detPPV")], by=df[,c("mod.var","method")], FUN=mean, na.rm=T)
+
+rank <- data.frame(FP=rownames(ag[order(ag$FP.atFDR05, ag$detPPV, decreasing=c(F,T)),]),
+                   TP=rownames(ag[order(ag$TP.atFDR05, ag$detPPV, decreasing=TRUE),])
+                   )
+rank <- sapply(1:nrow(rank), function(i) which(rank$FP==i) + which(rank$TP==i))
+ag <- ag[order(rank),]
+ag2 <- ag[ag$mod.var!="original",]
+```
+
+For each variant, what's the ratio of total measured instances of this variant in the top 20%?  
+
+```{r, warning=F,message=F}
+# ratio of plmod instances in the top 10% ranks [vs. individual sizes of each plmod variant]
+round( table(ag2$mod.var[1:floor(nrow(ag)/5)]) / table(ag2$mod.var) ,2)
+```
+
+How the top 10% are split up in terms of variants. When summed, they give 100%.  
+
+```{r, warning=F,message=F}
+# ratio of plmod instances in the top 10% ranks [vs. number of ranks that make up the top 5%]
+round( table(ag2$mod.var[1:floor(nrow(ag2)/5)]) / sum(table(ag2$mod.var[1:floor(nrow(ag2)/5)])) ,2)
+```
+
+### Tables {#default}  
+
+Table of top 10% performing variants:  
+
+```{r, warning=F,message=F}
+# top ranks of aggregated table
+head(ag2, floor(nrow(ag2)/5))
+```
+
+## Top variant for each test {#top_vars}  
+
+```{r}
+do.call(rbind, lapply(unique(ag2$method), function(x) ag2[ag2$method==x,][1,]))
+```
+
+## Heatmaps
+
+```{r, warning=F,message=F, fig.height=6, fig.width=7}
+HM(df, form=method~mod.var, cluster.cols = T)
+HM(df, metric="FP.atFDR05", form=method~mod.var, cluster.cols = T)
+HM(df[df$mod.var!="original" & df$method!="gsea",], metric="FP.atFDR05", form=method~mod.var, cluster.cols = T)
+```
+
+## Runtime Analysis
+
+We used to define *co* based on the miRNAs that pass as significant. This meant *co* lengths and thus the number of variables that were tested in a secondary test (here *gsea*) differed for every primary test (i.e. using *regmir* as primary test might result in a smaller *co* than using *areamir*). Now we define *co* based on a top percentage of miRNAs (in terms of FDR & pvalue). This means that *co* lengths are largely identical for all tests. This means that we expect to see smaller differences in the performances between each variant (defined by their different primary tests).  
+
+These are the codes for both versions:  
+
+```{r, eval=FALSE}
+# old: 
+if( sum(e$FDR<=.05,na.rm=TRUE) > 30 ){
+  co <- rownames(e[e$FDR<=.05,])
+} else if( sum(e$FDR<=.2) > 30 ){
+  co <- rownames(e[e$FDR<=.2,])
+} else if( nrow(e)>=30 ) {
+  co <- rownames(e[1:30,])
+} else {
+  co <- rownames(e[1:nrow(e),])
+}
+```
+
+```{r, eval=FALSE}
+# new:
+if( nrow(e) >= 30 ){
+  co <- head(rownames(e),n=max(30,ceiling(nrow(e)/10)))
+} else {
+  co <- rownames(e)
+}
+```
+
+### Time for each test individaully
+
+```{r, warning=F, message=F}
+rts <- readRDS("../results_runtime/combined.runtimes.rds")
+names(rts) <- nd <- c("amin","bartel.hek","bartel.hela","jeong")
+```
+
+```{r}
+formDF <- function(l){
+  df <- as.data.frame(dplyr::bind_rows(l, .id="id"))
+  df2 <- stack(df[!colnames(df) %in% "id"])
+  df2$id <- factor(df$id)
+  df2$test <- factor(rownames(l[[1]]))
+  return(df2)
+}
+```
+
+```{r}
+rdf1 <- formDF(rts[nd[c(1,4)]])
+rdf2 <- formDF(rts[nd[-c(1,2,4)]])
+rdf3 <- formDF(rts[nd[-c(1,3,4)]])
+```
+
+```{r, warning=FALSE, message=FALSE}
+# combine runtimes of all datasets
+rdf <- rbind(rdf1,rdf2,rdf3)
+rdf <- rdf[!grepl(".old",rdf$test),]
+ag <- aggregate(rdf[,"values"], by=list(rdf[,"test"]), FUN=mean)
+nt <- ag[,1]
+ag <- ag[,-1]
+names(ag) <- nt
+round(ag[order(ag)],1)
+```
+
+All values are in seconds per run. The *areamir* test is by far the fastest. A more detailed analysis of runtimes can be found in *enrichMiR_runtimes.html*.   
+
+
