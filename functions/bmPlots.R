@@ -8,7 +8,7 @@
 #'
 #' @return a ggplot of TP rates vs. total number of FPs (at FDR<.05)
 #'
-TPvFP <- function(df, labels=NULL, perm=FALSE, label.all=FALSE, full.scale=TRUE){
+TPvFP <- function(df, labels=NULL, perm=FALSE, label.all=FALSE, full.scale=TRUE, features=NULL){
   
   suppressPackageStartupMessages({
     library(ggplot2)
@@ -20,17 +20,27 @@ TPvFP <- function(df, labels=NULL, perm=FALSE, label.all=FALSE, full.scale=TRUE)
   }
   # aggregate to get a single scores per method (& permutation)
   if(perm){
-    df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=df[,c("prop","method")], FUN=mean)
+    df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=df[,c("prop","method",features)], FUN=mean)
     label.data <- subset(df.agg, method %in% labels) %>% filter(prop=="original")
   } else {
-    df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=list(method=df$method), FUN=mean)
-    label.data <- subset(df.agg, method %in% labels)
-    prop <- NULL
+    if(is.null(features)){
+      df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=list(method=df$method), FUN=mean)
+      label.data <- subset(df.agg, method %in% labels)
+      prop <- NULL
+    } else {
+      df.agg <- aggregate(df[,c("FP.atFDR05","TP.atFDR05")], by=df[,c("method",features)], FUN=mean)
+      label.data <- subset(df.agg, method %in% labels)
+      prop <- NULL
+    }
   }
   
   if(full.scale){
     scale <- scale_y_continuous(limits = c(0,1))
   } else scale <- NULL
+  
+  if(!is.null(features)){
+    wrap <- facet_wrap(as.formula(paste0("~", paste(features, collapse="+"))))
+  } else wrap <- NULL
   
   # create plot
   set.seed(123)
@@ -59,7 +69,7 @@ TPvFP <- function(df, labels=NULL, perm=FALSE, label.all=FALSE, full.scale=TRUE)
           axis.ticks=element_line(colour = "grey35"),
           text = element_text(size=10), axis.text = element_text(size=9)
     ) +
-    scale
+    scale + wrap
 }
 
 #--------------------------------------------------------------------------------

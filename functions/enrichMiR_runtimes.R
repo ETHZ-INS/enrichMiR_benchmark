@@ -1,3 +1,5 @@
+# This uses gene-level annotations (TS) and datasets Amin, Jeong & Bartel. All tests are run and their runtimes saved.
+
 devtools::load_all("/mnt/schratt/tgermade_test/master_19_20/enrichMiR/enrichMiR/")
 
 cleanDEA <- function(dea){
@@ -36,44 +38,181 @@ suppressPackageStartupMessages(c(
 ))
 
 
-datasets <- c("amin","jeong")
-for(ds in datasets){
+# source("/mnt/schratt/tgermade_test/master_19_20/enrichMiR/enrichMiR/R/enrichMiR.R")
+# source("/mnt/schratt/tgermade_test/master_19_20/enrichMiR/enrichMiR/R/tests.R")
 
+# datasets <- c("amin","jeong")
+# for(ds in datasets){
+# 
+#   if(ds=="amin"){
+#     DEA <- readRDS("../data/amin.DEA.SE.rds")
+#     TS <- readRDS("../data/TargetScan_mouse.rds")
+#   } else {
+#     DEA <- readRDS("../data/jeong.DEA.SE.rds")
+#     TS <- readRDS("../data/TargetScan_human.rds")
+#   }
+#   DEA <- rowData(DEA)$DEA.all
+#   DEA <- cleanDEA(DEA)
+#   if(all(c("family", "feature") %in% colnames(TS))){
+#     colnames(TS) <- gsub("^family$","set", colnames(TS))
+#   }
+#   TS <- DataFrame(TS)
+# 
+#   # measure time for each test (in seconds)
+#   tests <- c("overlap","siteoverlap","woverlap","modscore","modsites","regmir","regmirb","ks","mw","gsea","areamir")
+#   iterations <- 10
+# 
+#   rt <- sapply(1:iterations, function(i){
+#     print(paste("Iteration",i))
+#     t <- NULL
+#     e <- NULL
+#     for(test in tests){
+#       start_time <- Sys.time()
+#       e <- list(e, enrichMiR(DEA=as.data.frame(DEA), TS=TS, miRNA.expression=NULL, families=metadata(TS)$families, cleanNames=TRUE, tests=test) )
+#       end_time <- Sys.time()
+#       t <- c(t, end_time - start_time)
+#     }
+#     names(t) <- tests
+#     t
+#   })
+#   colnames(rt) <- paste0("iteration.",1:iterations)
+# 
+#   if(ds=="amin"){
+#     saveRDS(rt, "../results_runtime/amin.runtimes.rds")
+#   } else {
+#     saveRDS(rt, "../results_runtime/jeong.runtimes.rds")
+#   }
+# }
+# 
+# 
+# 
+# datasets <- c("bartel.hela","bartel.hek")
+# for(ds in datasets){
+# 
+#   if(ds=="bartel.hela"){
+#     DEA <- readRDS("../data/bartel.hela.DEA.SE.rds")
+#   } else {
+#     DEA <- readRDS("../data/bartel.hek.DEA.SE.rds")
+#   }
+#   TS <- readRDS("../data/TargetScan_human.rds")
+#   if(all(c("family", "feature") %in% colnames(TS))){
+#     colnames(TS) <- gsub("^family$","set", colnames(TS))
+#   }
+#   TS <- DataFrame(TS)
+# 
+#   tests <- c("overlap","siteoverlap","woverlap","modscore","modsites","regmir","regmirb","ks","mw","gsea","areamir")
+#   n <- names(rowData(DEA))[grepl("DEA.",names(rowData(DEA)))][-1]
+#   rt <- sapply(n, function(dea){
+#     print(paste("Experiment",dea))
+# 
+#     DEA <- rowData(DEA)[[dea]]
+#     DEA <- cleanDEA(DEA)
+#     # measure time for each test (in seconds)
+#     t <- NULL
+#     e <- NULL
+#     for(test in tests){
+#       start_time <- Sys.time()
+#       e <- list(e, enrichMiR(DEA=as.data.frame(DEA), TS=TS, miRNA.expression=NULL, families=metadata(TS)$families, cleanNames=TRUE, tests=test) )
+#       end_time <- Sys.time()
+#       t <- c(t, end_time - start_time)
+#     }
+#     names(t) <- tests
+#     t
+#     })
+#     colnames(rt) <- n
+# 
+#     if(ds=="bartel.hela"){
+#       saveRDS(rt, paste0("../results_runtime/bartel.hela.runtimes.rds"))
+#     } else {
+#       saveRDS(rt, paste0("../results_runtime/bartel.hek.runtimes.rds"))
+#     }
+# }
+  
+
+
+
+
+
+
+lrt <- NULL
+datasets <- c("amin","jeong","bartel.hela","bartel.hek")
+for(ds in datasets){
+  print(paste("Dataset:",ds))
+  
   if(ds=="amin"){
-    DEA <- readRDS("/mnt/schratt/tgermade_test/master_19_20/enrichMiR_benchmark/data/amin.DEA.SE.rds")
-    TS <- readRDS("/mnt/schratt/tgermade_test/master_19_20/enrichMiR_benchmark/data/TargetScan_mouse.rds")
+    DEA <- readRDS("../data/amin.DEA.SE.rds")
+    DEA <- rowData(DEA)$DEA.all
+    DEA <- cleanDEA(DEA)
+    TS <- readRDS("../data/TargetScan_mouse.rds")
   } else {
-    DEA <- readRDS("/mnt/schratt/tgermade_test/master_19_20/enrichMiR_benchmark/data/jeong.DEA.SE.rds")
-    TS <- readRDS("/mnt/schratt/tgermade_test/master_19_20/enrichMiR_benchmark/data/TargetScan_human.rds")
+    if(ds=="jeong") {
+      DEA <- readRDS("../data/jeong.DEA.SE.rds")
+      DEA <- rowData(DEA)$DEA.all
+      DEA <- cleanDEA(DEA)
+    } else if(ds=="bartel.hela") {
+      DEA <- readRDS("../data/bartel.hela.DEA.SE.rds")
+      n <- names(rowData(DEA))[grepl("DEA.",names(rowData(DEA)))][-1]
+    } else {
+      DEA <- readRDS("../data/bartel.hek.DEA.SE.rds")
+      n <- names(rowData(DEA))[grepl("DEA.",names(rowData(DEA)))][-1]
+    }
+    TS <- readRDS("../data/TargetScan_human.rds")
   }
-  DEA <- rowData(DEA)$DEA.all
-  DEA <- cleanDEA(DEA)
   if(all(c("family", "feature") %in% colnames(TS))){
     colnames(TS) <- gsub("^family$","set", colnames(TS))
   }
   TS <- DataFrame(TS)
-  
-  # measure time for each test (in seconds)
+
   tests <- c("overlap","siteoverlap","woverlap","modscore","modsites","regmir","regmirb","ks","mw","gsea","areamir")
-  tests <- setdiff(tests,"gsea")
-  t <- NULL
-  e <- NULL
-  for(test in tests){
-    start_time <- Sys.time()
-    e <- list(e, enrichMiR(DEA=as.data.frame(DEA), TS=TS, miRNA.expression=NULL, families=metadata(TS)$families, cleanNames=TRUE, tests=test) )
-    end_time <- Sys.time()
-    t <- c(t, end_time - start_time)
-  }
-  names(t) <- tests
-  e <- unlist(e)
-  names(e) <- tests
+  tests <- c("modscore","modsites") ############################################################
+  iterations <- 10 ############################################################
   
-  if(ds=="amin"){
-    saveRDS(t, "results/amin.runtimes.rds")
+  if(ds %in% c("amin","jeong")){
+    rt <- sapply(1:iterations, function(i){
+      print(paste("Iteration:",i))
+      
+      t <- NULL
+      e <- NULL
+      for(test in tests){
+        start_time <- Sys.time()
+        e <- list(e, enrichMiR(DEA=as.data.frame(DEA), TS=TS, miRNA.expression=NULL, 
+                               families=metadata(TS)$families, cleanNames=TRUE, tests=test) )
+        end_time <- Sys.time()
+        t <- c(t, end_time - start_time)
+      }
+      names(t) <- tests
+      t
+    })
+    colnames(rt) <- paste0("iteration.",1:iterations)
+    lrt[[ds]] <- rt
   } else {
-    saveRDS(t, "results/jeong.runtimes.rds")
+    rt <- sapply(n, function(dea){
+      print(paste("Experiment:",dea))
+      
+      DEA <- rowData(DEA)[[dea]]
+      DEA <- cleanDEA(DEA)
+      # measure time for each test (in seconds)
+      t <- NULL
+      e <- NULL
+      for(test in tests){
+        start_time <- Sys.time()
+        e <- list(e, enrichMiR(DEA=as.data.frame(DEA), TS=TS, miRNA.expression=NULL, 
+                               families=metadata(TS)$families, cleanNames=TRUE, tests=test) )
+        end_time <- Sys.time()
+        t <- c(t, end_time - start_time)
+      }
+      names(t) <- tests
+      t
+    })
+    colnames(rt) <- n
+    lrt[[ds]] <- rt
   }
 }
+  
+saveRDS(lrt, "../results_runtime/plmod.new.runtimes.rds") 
+
+
+
 
 
 

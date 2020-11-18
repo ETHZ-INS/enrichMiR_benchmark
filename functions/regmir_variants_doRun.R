@@ -2,7 +2,7 @@
 ####################################################################################################
 # FUNCTIONS: common
 
-devtools::load_all("../master_19_20/enrichMiR/enrichMiR/")
+devtools::load_all("../../tgermade_test/master_19_20/enrichMiR/enrichMiR/")
 
 #' cleanDEA
 #'
@@ -83,6 +83,41 @@ loadAll <- function(dea,tp){
   return(dea)
 }
 
+#' reduceBm
+#' check for duplicated bm columns for regmir
+#' @param bm 
+#'
+#' @return
+#' @export
+#'
+#' @examples
+reduceBm <- function(bm){
+  # split columns into groups having the same colSums
+  si <- split(seq_len(ncol(bm)), colSums(bm))
+  if(!any(lengths(si)>1)) return(bm)
+  ll <- lapply(si[lengths(si)>1], FUN=function(i){
+    # for each group of >1 columns:
+    # calculate pairwise distances
+    d <- as.matrix(dist(t(bm[,i])))
+    # remove redundant sets
+    d <- d[!duplicated(d),,drop=FALSE]
+    # extract sets
+    lapply(seq_len(nrow(d)), FUN=function(x){
+      colnames(d)[which(d[x,]==0)]
+    })
+  })
+  ll <- unlist(ll, recursive=FALSE)
+  # remove things that aren't duplicated
+  ll <- ll[lengths(ll)>1]
+  if(length(ll)==0) return(bm)
+  old.names <- sapply(ll, FUN=function(x) x[1]) # those columns we'll rename
+  toRemove <- sapply(ll, FUN=function(x) x[-1]) # those columns we remove
+  bm <- bm[,setdiff(colnames(bm), unlist(toRemove))]
+  bm2 <- bm[,old.names]
+  colnames(bm2) <- sapply(ll, FUN=function(x) paste(sort(x),collapse="."))
+  cbind(bm[,setdiff(colnames(bm), old.names)],bm2)
+}
+
 
 ####################################################################################################
 ####################################################################################################
@@ -104,7 +139,7 @@ loadAll <- function(dea,tp){
 #' @export
 #'
 #' @examples
-regmir.new <- function(e, sets, dea, sig.binary=FALSE, var.binary=FALSE, cpm.weights=TRUE,
+regmir.new <- function(e, sets, dea, sig.binary=FALSE, var.binary=FALSE, cpm.weights=TRUE, pure=FALSE,
                        use.intercept=FALSE, keepAll=TRUE, coeff.cons=TRUE, KO=TRUE, useFC=TRUE){
   
   suppressPackageStartupMessages(c(
@@ -112,9 +147,6 @@ regmir.new <- function(e, sets, dea, sig.binary=FALSE, var.binary=FALSE, cpm.wei
     library(zetadiv)
   ))
 
-  e <- as.data.frame(e)
-  e[is.na(e)] <- 1
-  
   # generate signal
   if(sig.binary){
     binary.signatures <- list(
@@ -130,16 +162,16 @@ regmir.new <- function(e, sets, dea, sig.binary=FALSE, var.binary=FALSE, cpm.wei
     if(useFC){
       signal <- dea$logFC
     } else {
+      dea$FDR[dea$FDR==0] <- min(dea$FDR[dea$FDR>0])
       signal <- -log10(dea$FDR)*sign(dea$logFC)
     }
     names(signal) <- rownames(dea)
   }
   
   # gnerate bm
-  ## prepare the target matrix
   if(var.binary){
     bm <- sapply(split(as.character(sets$feature), sets$set), FUN=function(x) names(signal) %in% x)
-  }else{
+  } else {
     TS2 <- aggregate(sets[,"score",drop=FALSE], by=as.data.frame(sets[,c("set","feature")]), FUN=min)
     TS2 <- split(TS2[,c("score","feature")], TS2$set)
     bm <- sapply(TS2, FUN=function(x){
@@ -150,18 +182,46 @@ regmir.new <- function(e, sets, dea, sig.binary=FALSE, var.binary=FALSE, cpm.wei
     colnames(bm) <- names(TS2)
   }
   bm <- bm[,colSums(bm)>0]
+  bm <- reduceBm(bm)
   
-  # generate co
-  if( sum(e$FDR<=.05,na.rm=TRUE) > 0 ){
-    co <- rownames(e[e$FDR<=.05,])
-  } else if( sum(e$FDR<=.2) > 0 ){
-    co <- rownames(e[e$FDR<=.2,])
-  } else if( nrow(e) >= 10 ) {
-    co <- rownames(e[1:10,])
+  if(pure){
+    # regularized regression with cross-validation
+    if(sig.binary){
+      fits <- cv.glmnet(bm, signal, standardize=FALSE, alpha=1, family="binomial", lower.limits=0 )
+    } else {
+      fits <- cv.glmnet(bm, signal, standardize=FALSE, alpha=1, family="gaussian")
+    }
+    # we extract the miRNAs selected by the best most regularized glmnet fit:
+    co <- coef(fits, fits$lambda.1se)
+    co <- row.names(co)[co[,1]!=0][-1]
+    if( length(co)==0 && fits$lambda.min!=fits$lambda.1se ){
+      # if no coefficient was selected, we use the minimum lambda
+      co <- coef(fits, fits$lambda.min)
+      co <- row.names(co)[co[,1]!=0][-1]
+    }
   } else {
-    co <- rownames(e[1:nrow(e),])
+    e <- as.data.frame(e)
+    e[is.na(e)] <- 1
+    # generate co NEW
+    if( nrow(e) >= 5 ){
+      co <- head(rownames(e),n=max(5,ceiling(nrow(e)/10)))
+    } else {
+      co <- rownames(e)
+    }
   }
+  # generate co OLD
+  # if( sum(e$FDR<=.05,na.rm=TRUE) > 0 ){
+  #   co <- rownames(e[e$FDR<=.05,])
+  # } else if( sum(e$FDR<=.2) > 0 ){
+  #   co <- rownames(e[e$FDR<=.2,])
+  # } else if( nrow(e) >= 10 ) {
+  #   co <- rownames(e[1:10,])
+  # } else {
+  #   co <- rownames(e[1:nrow(e),])
+  # }
+  
   # combine signal, bm and co
+  co <- co[co %in% colnames(bm)] # <- when doing bm[,colSums(bm)>0] we can lose miRNAs in bm
   signald <- data.frame( y=signal, bm[,co,drop=FALSE] )
   
   # new fit to get significance estimates
@@ -172,25 +232,17 @@ regmir.new <- function(e, sets, dea, sig.binary=FALSE, var.binary=FALSE, cpm.wei
   }
   if(cpm.weights){
     w <- dea[rownames(signald),]$logCPM + abs(min(dea[rownames(signald),]$logCPM))
-    if(sig.binary){
-      if(coeff.cons){
-        mod <- glm.cons( form, data=signald, family="binomial", cons=1, cons.inter=-1, weights=w)
-      } else {
-        mod <- glm( form, data=signald, family="binomial", weights=w )
-      }
-    }else{
-      mod <- lm( form, data=signald, weights=w )
+  } else {
+    w <- NULL
+  }
+  if(sig.binary){
+    if(coeff.cons){
+      mod <- glm.cons( form, data=signald, family="binomial", cons=1, cons.inter=-1, weights=w )
+    } else {
+      mod <- glm( form, data=signald, family="binomial", weights=w )
     }
   } else {
-    if(sig.binary){
-      if(coeff.cons){
-        mod <- glm.cons( form, data=signald, family="binomial", cons=1, cons.inter=-1)
-      } else {
-        mod <- glm( form, data=signald, family="binomial" )
-      }
-    }else{
-      mod <- lm( form, data=signald )
-    }
+    mod <- lm( form, data=signald, weights=w )
   }
   
   # we extract the coefficients and p-values, and reorganize the output:
@@ -201,7 +253,18 @@ regmir.new <- function(e, sets, dea, sig.binary=FALSE, var.binary=FALSE, cpm.wei
   row.names(res) <- gsub("TRUE","",row.names(res))
   
   if(keepAll){
-    co2 <- setdiff(colnames(bm), co)
+    if(pure){
+      co2 <- sort(apply(fits$glmnet.fit$beta,1,FUN=function(x){
+        if(!any(x!=0)) return(Inf)
+        which(x!=0)[1]
+      }))
+      names(co2) <- gsub("-", ".", names(co2))
+      co2 <- co2[grep("^\\(Intercept\\)$|FALSE$", names(co2), invert=TRUE)]
+      names(co2) <- gsub("TRUE","",names(co2))
+      co2 <- names(co2[setdiff(names(co2),row.names(res))])
+    } else {
+      co2 <- setdiff(colnames(bm), co)
+    }
     co2 <- data.frame(row.names=co2, beta=rep(NA_real_,length(co2)),
                       stderr=NA_real_, z=NA_real_, pvalue=1)
     if(!sig.binary) colnames(co2)[3] <- "t"
@@ -224,7 +287,7 @@ regmir.new <- function(e, sets, dea, sig.binary=FALSE, var.binary=FALSE, cpm.wei
 #' @export
 #'
 #' @examples
-regmirRun <- function(p){
+regmirRun <- function(p, pure=FALSE){
   dea <- p$dea
   dea <- loadAll(dea, TPs)
   dea <- lapply(dea, cleanDEA)
@@ -236,252 +299,53 @@ regmirRun <- function(p){
   TS <- DataFrame(TS)
   ko <- p$ko
   n <- p$n
+  print(paste("regmir pure:", pure))
   
+  for(sig.bin in c(T,F)){
+    S=ifelse(sig.bin,"bin","cont")
+    if(sig.bin) coeff.cons=c(T,F) else coeff.cons=F
   
-  for(w in cpm.weights <- c(T,F)){
-    print(paste("weights:", w))
-    W=ifelse(w,"w","nw")
-    
-    for(v in var.bin <- c(T,F)){
-      print(paste("binary variables:", v))
-      V=ifelse(v,"bin","cont")
+    for(var.bin in c(T,F)){
+      V=ifelse(var.bin,"bin","cont")
       
-      for(s in sig.bin <- c(T,F)){
-        print(paste("binary signal:", s))
-        S=ifelse(s,"bin","cont")
-        
-        if(s){
-          for(c in coeff.cons <- c(T,F)){
-            print(paste("constrained coefficients:", c))
-            C=ifelse(c,"c","nc")
-            
-            e <- lapply(names(dea), function(i) lapply(e.list[[i]]$original@res, function(e) 
-              regmir.new(e, TS, dea[[i]], KO=ko, cpm.weights=w, var.binary=v, sig.binary=s, coeff.cons=c) 
-            ))
-            names(e) <- names(dea)
-            saveRDS(e, paste0("results2/", n, ".regmir.", S,"_",V,".",W,".",C,".rds") )
-            print( paste(paste0(n, ".regmir.", S,"_",V,".",W,".",C,".rds"),"saved.") )
-            
-          }
-        } else {
+      for(cpm.weights in c(T,F)){
+        W=ifelse(cpm.weights,"w","nw")
+
+        for(c in coeff.cons){
+          C=ifelse(c,"c","nc")
+          print(paste("binary signal:", sig.bin,
+                      "| binary variables:", var.bin,
+                      "| CPM weights:", cpm.weights))
+          if(sig.bin) print(paste("constrained coefficients:", c))
           
-          e <- lapply(names(dea), function(i) lapply(e.list[[i]]$original@res, function(e) 
-            regmir.new(e, TS, dea[[i]], KO=ko, cpm.weights=w, var.binary=v, sig.binary=s) 
-          ))
-          names(e) <- names(dea)
-          saveRDS(e, paste0("results2/", n, ".regmir.", S,"_",V,".",W,".rds") )
-          print( paste(paste0(n, ".regmir.", S,"_",V,".",W,".rds"),"saved.") )
-          
-        }
-      }
-    }
-  }
-  
-}
-
-####################################################################################################
-####################################################################################################
-# FUNCTIONS: To run regmir (pure regmir: different variations)
-
-#' regmir.new2
-#'
-#' @param e 
-#' @param sets 
-#' @param dea 
-#' @param binary 
-#' @param alpha 
-#' @param use.intercept 
-#' @param keepAll 
-#' @param cons 
-#' @param KO 
-#'
-#' @return
-#' @export
-#'
-#' @examples
-regmir.new2 <- function(dea, sets, sig.binary=FALSE, var.binary=FALSE, cpm.weights=TRUE, alpha=1,
-                        use.intercept=FALSE, keepAll=TRUE, coeff.cons=TRUE, KO=TRUE, useFC=TRUE){
-  
-  suppressPackageStartupMessages(c(
-    library(glmnet),
-    library(zetadiv)
-  ))
-  
-  # generate signal
-  if(sig.binary){
-    binary.signatures <- list(
-      down=.dea2binary(dea, th=0.05, th.alfc=0, restrictSign=-1),
-      up=.dea2binary(dea, th=0.05, th.alfc=0, restrictSign=1)
-    )
-    if(KO){
-      signal <- binary.signatures$up
-    } else {
-      signal <- binary.signatures$down
-    }
-  } else {
-    if(useFC){
-      signal <- dea$logFC
-    } else {
-      signal <- -log10(dea$FDR)*sign(dea$logFC)
-    }
-    names(signal) <- rownames(dea)
-  }
-  
-  # gnerate bm
-  ## prepare the target matrix
-  if(var.binary){
-    bm <- sapply(split(as.character(sets$feature), sets$set), FUN=function(x) names(signal) %in% x)
-  }else{
-    TS2 <- aggregate(sets[,"score",drop=FALSE], by=as.data.frame(sets[,c("set","feature")]), FUN=min)
-    TS2 <- split(TS2[,c("score","feature")], TS2$set)
-    bm <- sapply(TS2, FUN=function(x){
-      row.names(x) <- x$feature
-      -1*x[names(signal),"score"]
-    })
-    bm[is.na(bm)] <- 0
-    colnames(bm) <- names(TS2)
-  }
-  bm <- bm[,colSums(bm)>0]
-  
-  # regularized regression with cross-validation
-  if(sig.binary){
-    fits <- cv.glmnet(bm, signal, standardize=FALSE, alpha=alpha, family="binomial", lower.limits=0 )
-  }else{
-    fits <- cv.glmnet(bm, signal, standardize=FALSE, alpha=alpha, family="gaussian")
-  }
-  
-  # we extract the miRNAs selected by the best most regularized glmnet fit:
-  co <- coef(fits, fits$lambda.1se)
-  co <- row.names(co)[co[,1]!=0][-1]
-  if( length(co)==0 && fits$lambda.min!=fits$lambda.1se ){
-    # if no coefficient was selected, we use the minimum lambda
-    co <- coef(fits, fits$lambda.min)
-    co <- row.names(co)[co[,1]!=0][-1]
-  }
-  
-  # combine signal, bm and co
-  signald <- data.frame( y=signal, bm[,co,drop=FALSE] )
-  
-  # new fit to get significance estimates
-  if(use.intercept){
-    form <- y~.
-  }else{
-    form <- y~0+.
-  }
-  if(cpm.weights){
-    w <- dea[rownames(signald),]$logCPM + abs(min(dea[rownames(signald),]$logCPM))
-    if(sig.binary){
-      if(coeff.cons){
-        mod <- glm.cons( form, data=signald, family="binomial", cons=1, cons.inter=-1, weights=w)
-      } else {
-        mod <- glm( form, data=signald, family="binomial", weights=w )
-      }
-    }else{
-      mod <- lm( form, data=signald, weights=w )
-    }
-  } else {
-    if(sig.binary){
-      if(coeff.cons){
-        mod <- glm.cons( form, data=signald, family="binomial", cons=1, cons.inter=-1)
-      } else {
-        mod <- glm( form, data=signald, family="binomial" )
-      }
-    }else{
-      mod <- lm( form, data=signald )
-    }
-  }
-  
-  # we extract the coefficients and p-values, and reorganize the output:
-  res <- coef(summary(mod))
-  res <- res[order(res[,4]),,drop=FALSE]
-  colnames(res) <- c("beta","stderr",ifelse(sig.binary,"z","t"),"pvalue")
-  res <- res[grep("^\\(Intercept\\)$|FALSE$", row.names(res), invert=TRUE),,drop=FALSE]
-  row.names(res) <- gsub("TRUE","",row.names(res))
-  
-  if(keepAll){
-    co2 <- sort(apply(fits$glmnet.fit$beta,1,FUN=function(x){
-      if(!any(x!=0)) return(Inf)
-      which(x!=0)[1]
-    }))
-    names(co2) <- gsub("-", ".", names(co2))
-    co2 <- co2[grep("^\\(Intercept\\)$|FALSE$", names(co2), invert=TRUE)]
-    names(co2) <- gsub("TRUE","",names(co2))
-    co2 <- co2[setdiff(names(co2),row.names(res))]
-    co2 <- data.frame(row.names=names(co2), beta=rep(NA_real_,length(co2)),
-                      stderr=NA_real_, z=NA_real_, pvalue=1)
-    if(!sig.binary) colnames(co2)[3] <- "t"
-    res <- rbind(res,co2)
-  }
-  
-  # we adjust using all features as number of comparisons
-  if(nrow(res)>0){
-    res$FDR <- p.adjust(res$pvalue, n=ncol(bm))
-  }
-  res
-}
-
-
-#' regmirRun2
-#'
-#' @param p 
-#'
-#' @return
-#' @export
-#'
-#' @examples
-regmirRun2 <- function(p){
-  dea <- p$dea
-  dea <- loadAll(dea, TPs)
-  dea <- lapply(dea, cleanDEA)
-  TS <- readRDS(p$ts)
-  if(all(c("family", "feature") %in% colnames(TS))){
-    colnames(TS) <- gsub("^family$","set", colnames(TS))
-  }
-  TS <- DataFrame(TS)
-  ko <- p$ko
-  n <- p$n
-  
-  
-  for(w in cpm.weights <- c(T,F)){
-    print(paste("weights:", w))
-    W=ifelse(w,"w","nw")
-    
-    for(v in var.bin <- c(T,F)){
-      print(paste("binary variables:", v))
-      V=ifelse(v,"bin","cont")
-      
-      for(s in sig.bin <- c(T,F)){
-        print(paste("binary signal:", s))
-        S=ifelse(s,"bin","cont")
-        
-        if(s){
-          for(c in coeff.cons <- c(T,F)){
-            print(paste("constrained coefficients:", c))
-            C=ifelse(c,"c","nc")
-            
-            e <- lapply(names(dea), function(i) 
-              regmir.new2(dea[[i]], TS, KO=ko, cpm.weights=w, var.binary=v, sig.binary=s, coeff.cons=c) 
+          if(pure){
+            res <- lapply(names(dea), function(i)
+              regmir.new(e=NULL, TS, dea[[i]], KO=ko, cpm.weights=cpm.weights, pure=pure,
+                         var.binary=var.bin, sig.binary=sig.bin, coeff.cons=c) 
             )
-            names(e) <- names(dea)
-            saveRDS(e, paste0("results2/regmir_pure/", n, ".regmir.", S,"_",V,".",W,".",C,".rds") )
-            print( paste(paste0(n, ".regmir.", S,"_",V,".",W,".",C,".rds"),"saved.") )
-            
+            dir <- "../results_regmir2/regmir_pure/"
+          } else {
+            res <- lapply(names(dea), function(i) lapply(e.list[[i]]$original@res, function(e) 
+              regmir.new(e, TS, dea[[i]], KO=ko, cpm.weights=cpm.weights, pure=pure,
+                         var.binary=var.bin, sig.binary=sig.bin, coeff.cons=c) 
+            ))
+            dir <- "../results_regmir2/"
           }
-        } else {
-          
-          e <- lapply(names(dea), function(i) 
-            regmir.new2(dea[[i]], TS, KO=ko, cpm.weights=w, var.binary=v, sig.binary=s) 
-          )
-          names(e) <- names(dea)
-          saveRDS(e, paste0("results2/regmir_pure/", n, ".regmir.", S,"_",V,".",W,".rds") )
-          print( paste(paste0(n, ".regmir.", S,"_",V,".",W,".rds"),"saved.") )
-          
+          names(res) <- names(dea)
+        
+          if(sig.bin){
+            saveRDS(res, paste0(dir, n, ".regmir.", S,"_",V,".",W,".",C,".rds") )
+            print( paste(paste0(n, ".regmir.", S,"_",V,".",W,".",C,".rds"),"saved.") )
+          } else {
+            saveRDS(res, paste0(dir, n, ".regmir.", S,"_",V,".",W,".rds") )
+            print( paste(paste0(n, ".regmir.", S,"_",V,".",W,".rds"),"saved.") )
+          }
         }
       }
     }
   }
-  
 }
+
 
 ####################################################################################################
 ####################################################################################################
@@ -505,9 +369,9 @@ TPs <- c(
 
 # load
 n <- c("bartel.hek","bartel.hela","amin","ratPolyA","cherone.d0","cherone.d1","jeong")
-dea.files <- paste0("../master_19_20/enrichMiR_benchmark/data/",n,".DEA.SE.rds")
-e.files <- paste0("../master_19_20/enrichMiR_benchmark/results/",n,".enrichMiR.rds")
-ts.files <- list.files("../master_19_20/enrichMiR_benchmark/data", pattern="TargetScan_", full.names=TRUE)
+dea.files <- paste0("../data/",n,".DEA.SE.rds")
+e.files <- paste0("../results/",n,".enrichMiR.rds")
+ts.files <- list.files("../data", pattern="TargetScan_", full.names=TRUE)
 names(ts.files) <- c("hsa","mmu","rno")
 
 params <- lapply(1:length(n), function(i){
@@ -524,13 +388,18 @@ params <- lapply(1:length(n), function(i){
 names(params) <- n
 
 # run: different regmir variations based on other tests
-#lapply(params[5:6], regmirRun)
+#lapply(params, regmirRun)
 
 # run: different regmir variations
-lapply(params, regmirRun2)
+lapply(params, regmirRun, pure=TRUE)
 
 
-
-
+# 
+# res <- lapply(names(dea), function(i) lapply(names(e.list[[i]]$original@res), function(e){ 
+#   print(e)
+#   regmir.new(e.list[[i]]$original@res[[e]], TS, dea[[i]], KO=ko, cpm.weights=cpm.weights, pure=pure,
+#              var.binary=var.bin, sig.binary=sig.bin, coeff.cons=c) 
+#   })
+# )
 
 

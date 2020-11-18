@@ -1,3 +1,7 @@
+####################################################################################################
+####################################################################################################
+# FUNCTIONS: common
+
 devtools::load_all("../../tgermade_test/master_19_20/enrichMiR/enrichMiR/")
 
 #' cleanDEA
@@ -80,26 +84,23 @@ loadAll <- function(dea,tp){
 }
 
 
-#' plMod.new
+####################################################################################################
+####################################################################################################
+# FUNCTIONS: To run for combined tests (results from other tests + 2nd regmir test: different variations)
+
+#' gsea.new
 #'
-#' @param e 
-#' @param sets 
-#' @param dea 
-#' @param sig.binary 
-#' @param useFC 
-#' @param KO 
-#' @param var 
-#' @param cpm.weights 
-#' @param correctForLength 
+#' @param signal A named logical vector indicating which features are differentially-expressed
+#' @param sets A data.frame with at least the following columns: 'set', 'feature'.
+#' @param maxSize The maximum number of elements in a set to be tested (default 500). If the test takes too long to run, consider setting this.
+#' @param nperm The number of permutations, default 2000. The more permutations, the more precise the p-values, in particular for small p-values.
 #'
-#' @return
+#' @return a data.frame.
+#'
+#' @importFrom fgsea fgsea
 #' @export
-#'
-#' @examples
-plMod.new <- function(e, sets, dea, sig.binary=FALSE, useFC=TRUE, KO=TRUE, var="sites", 
-                      cpm.weights=TRUE, correctForLength=NULL, pure=FALSE){
-  
-  # define signal
+gsea.new <- function(e, dea, sets, maxSize=300, nperm=2000, KO=TRUE, useFC=TRUE, sig.binary=TRUE, pure=FALSE, ...){
+  # generate signal
   if(sig.binary){
     binary.signatures <- list(
       down=.dea2binary(dea, th=0.05, th.alfc=0, restrictSign=-1),
@@ -119,24 +120,23 @@ plMod.new <- function(e, sets, dea, sig.binary=FALSE, useFC=TRUE, KO=TRUE, var="
     }
     names(signal) <- rownames(dea)
   }
-  
   # clean e & restrict sets
   if(!pure){
     e <- as.data.frame(e)
     e[is.na(e)] <- 1
     # generate co OLD
-    # if( sum(e$FDR<=.05,na.rm=TRUE) > 0 ){
+    # if( sum(e$FDR<=.05,na.rm=TRUE) > 30 ){
     #   co <- rownames(e[e$FDR<=.05,])
-    # } else if( sum(e$FDR<=.2) > 0 ){
+    # } else if( sum(e$FDR<=.2) > 30 ){
     #   co <- rownames(e[e$FDR<=.2,])
-    # } else if( nrow(e)>=10 ) {
-    #   co <- rownames(e[1:10,])
+    # } else if( nrow(e)>=30 ) {
+    #   co <- rownames(e[1:30,])
     # } else {
     #   co <- rownames(e[1:nrow(e),])
     # }
     # generate co NEW
-    if( nrow(e) >= 5 ){
-      co <- head(rownames(e),n=max(5,ceiling(nrow(e)/10)))
+    if( nrow(e) >= 30 ){
+      co <- head(rownames(e),n=max(30,ceiling(nrow(e)/10)))
     } else {
       co <- rownames(e)
     }
@@ -144,47 +144,21 @@ plMod.new <- function(e, sets, dea, sig.binary=FALSE, useFC=TRUE, KO=TRUE, var="
     if(is.factor(sets$set)) sets$set <- droplevels(sets$set)
   }
   
-  # define weigthts
-  if(cpm.weights){
-    w <- dea[names(signal),]$logCPM + abs(min(dea[names(signal),]$logCPM))
-  } else w <- NULL
-  
-  # do test
-  if(is.null(correctForLength)) 
-    correctForLength <- (var=="sites" && 'sites' %in% colnames(sets))
-  if(correctForLength){
-    ag <- aggregate(sets$sites, by=list(feature=sets$feature), FUN=sum)
-    cfl <- ag[,2]
-    names(cfl) <- ag[,1]
-    cfl <- cfl[names(signal)]
-    cfl[which(is.na(cfl))] <- 0
-    names(cfl) <- names(signal)
-  }else{
-    cfl <- NULL
-  }
-  sets$family <- as.character(sets$set)
-  res <- as.data.frame(t(vapply(split(sets,sets$set), fcs=signal, cfl=cfl, 
-                                FUN.VALUE=numeric(2), FUN=function(x, fcs, cfl){
-                                  x <- x[!duplicated(x),]
-                                  row.names(x) <- x$feature
-                                  x2 <- as.matrix(x[names(fcs),var])
-                                  x2[which(is.na(x2))] <- 0
-                                  if(!is.null(cfl)) x2 <- cbind(x2,cfl)
-                                  if(is.null(w)){
-                                    mod <- try(.lm.fit(x2, fcs), silent=TRUE)
-                                  }else{
-                                    mod <- try(lm.wfit(x2, fcs, w=w), silent=TRUE)
-                                  }
-                                  if(is(mod,"try-error")) return(rep(NA_real_,2))
-                                  c(mod$coefficients[1], tryCatch(.lm.pval(mod,w)[1], error=function(e) NA))
-                                })))
-  colnames(res) <- c("coefficient","pvalue")
-  res$FDR <- p.adjust(res$pvalue)
-  res[order(res$FDR,res$pvalue),]
+  sets <- lapply(split(sets$feature,sets$set), tested=names(signal), 
+                 FUN=function(x,tested){ intersect(unique(x),tested) })
+  res <- fgsea::fgsea(sets, signal, nperm, minSize=4, maxSize=maxSize, ...)
+  #print("gsea run successful.")
+  if(nrow(res)==0) return("No GSEA output.")
+  res <- as.data.frame(res)
+  res <- res[order(res$padj,res$pval),]
+  colnames(res)[1:5] <- c("family","pvalue","FDR","ES","normalizedEnrichment")
+  colnames(res)[8] <- "features"
+  row.names(res) <- res[,1]
+  return(res[,-1])
 }
 
 
-#' plmodRun
+#' gseaRun
 #'
 #' @param p 
 #'
@@ -192,7 +166,7 @@ plMod.new <- function(e, sets, dea, sig.binary=FALSE, useFC=TRUE, KO=TRUE, var="
 #' @export
 #'
 #' @examples
-plmodRun <- function(p, pure=FALSE){
+gseaRun <- function(p, pure=FALSE){
   dea <- p$dea
   dea <- loadAll(dea, TPs)
   dea <- lapply(dea, cleanDEA)
@@ -204,40 +178,48 @@ plmodRun <- function(p, pure=FALSE){
   TS <- DataFrame(TS)
   ko <- p$ko
   n <- p$n
-  print(paste("plmod pure:", pure))
-
-  for(sig.bin in c(T,F)){
-    S=ifelse(sig.bin,"bin","cont")
-
-    for(var in c("sites","score")){
-      V=ifelse(var=="sites","bs","sc")
-      cfl=ifelse(var=="sites",T,F)
+    
+  print(paste("gsea pure:", pure))
+  
+  for(bin in c(T,F)){
+    S=ifelse(bin,"bin","cont")
+    if(bin) use.fc=F else use.fc=c(T,F)
+    
+    for(fc in use.fc){
+      print(paste("signal type:", toupper(S)))
+      if(!bin){
+        FC=ifelse(fc,"fc","fdr")
+        print(paste("signal feature:", toupper(FC)))
+      }
       
-      for(cpm.weights in c(T,F)){
-        W=ifelse(cpm.weights,"w","nw")
-        print(paste("binary signal:", sig.bin,
-                    "| variables:", var,
-                    "| CPM weights:", cpm.weights))
-        
-          if(!pure){
-            res <- lapply(names(dea), function(i) lapply(e.list[[i]]$original@res, function(e)
-              plMod.new(e, TS, dea[[i]], KO=ko, cpm.weights=cpm.weights, sig.binary=sig.bin, correctForLength=cfl, var=var)
-            ))
-            dir <- "../results_plmod2/"
-          } else {
-            res <- lapply(names(dea), function(i) 
-              plMod.new(e=NULL, TS, dea[[i]], KO=ko, cpm.weights=cpm.weights, sig.binary=sig.bin, correctForLength=cfl, var=var, pure=TRUE)
-            )
-            dir <- "../results_plmod2/plmod_pure/"
-          }
-          names(res) <- names(dea)
-          saveRDS(res, paste0(dir, n, ".plmod.", S,"_",V,".",W,".rds") )
-          print( paste(paste0(n, ".plmod.", S,"_",V,".",W,".rds"),"saved.") )
+      if(pure){
+        res <- lapply(names(dea), function(i) 
+          gsea.new(e=NULL, dea[[i]], TS, KO=ko, sig.binary=bin, useFC=fc, pure=pure, BPPARAM=MulticoreParam(8))
+        )
+        dir <- "../results_gsea/gsea_pure/"
+      } else {
+        res <- lapply(names(dea), function(i) lapply(e.list[[i]]$original@res, function(e)
+          gsea.new(e, dea[[i]], TS, KO=ko, sig.binary=bin, useFC=fc, pure=pure, BPPARAM=MulticoreParam(8))
+        ))
+        dir <- "../results_gsea/"
+      }
+      names(res) <- names(dea)
+      
+      if(bin){
+        saveRDS(res, paste0(dir, n, ".gsea.", S,".rds") )
+        print( paste(paste0(n, ".gsea.", S,".rds"),"saved.") )
+      } else {
+        saveRDS(res, paste0(dir, n, ".gsea.", S,"_",FC,".rds") )
+        print( paste(paste0(n, ".gsea.", S,"_",FC,".rds"),"saved.") )
       }
     }
   }
 }
 
+
+####################################################################################################
+####################################################################################################
+# MAIN
 
 TPs <- c( 
   let.7a = "GAGGUAG", lsy.6 = "UUUGUAU", miR.1 = "GGAAUGU", miR.124 = "AAGGCAC", 
@@ -275,13 +257,8 @@ params <- lapply(1:length(n), function(i){
 })
 names(params) <- n
 
-# run: different plmod variations based on other tests
-#lapply(params, plmodRun)
+# run: different regmir variations based on other tests
+#lapply(params, gseaRun)
 
-# run: different plmod variations
-lapply(params, plmodRun, pure=TRUE)
-
-
-
-
-
+# run: different regmir variations
+lapply(params, gseaRun, pure=TRUE)

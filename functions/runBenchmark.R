@@ -41,18 +41,24 @@ doBenchmark <- function(res, TP){
 #'
 #' @return a dataframe of pooled enrichMiR test scores
 #' 
-getBench <- function(e.list, TP, perm){ 
-  # generate the benchmarking scores
-  if(!perm){
-    bm.list <- lapply(names(TP), function(x) doBenchmark(e.list[[x]]@res, TP[x]))
-    names(bm.list) <- names(TP)
+getBench <- function(e.list, TP, perm=FALSE, e.obj=TRUE){ 
+  if(e.obj){
+    # generate the benchmarking scores
+    if(!perm){
+      bm.list <- lapply(names(TP), function(x) doBenchmark(e.list[[x]]@res, TP[x]))
+      names(bm.list) <- names(TP)
+    } else {
+      bm.list <- lapply(names(TP), function(x) lapply(e.list[[x]], function(e)
+        doBenchmark(e@res, TP[x])))
+      names(bm.list) <- names(e.list)
+      for(x in names(TP)){
+        names(bm.list[[x]]) <- names(e.list[[x]])
+      }
+      bm.list <- lapply(bm.list, FUN=function(x) dplyr::bind_rows(x, .id = "prop.rep"))
+    } 
   } else {
-    bm.list <- lapply(names(TP), function(x) lapply(e.list[[x]], function(e)
-      doBenchmark(e@res, TP[x])))
-    for(x in names(TP)){
-      names(bm.list[[x]]) <- names(e.list[[x]])
-    }
-    bm.list <- lapply(bm.list, FUN=function(x) dplyr::bind_rows(x, .id = "prop.rep"))
+    bm.list <- lapply(names(TP), function(x) doBenchmark(e.list[[x]], TP[x]))
+    names(bm.list) <- names(TP)
   }
   # generate a results df for plotting
   bm.df <- dplyr::bind_rows(bm.list, .id="treatment")
